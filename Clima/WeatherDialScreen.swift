@@ -205,15 +205,17 @@ struct WeatherDialScreen: View {
 
                 readout
 
-                strip {
-                    ForEach(snapshot?.daily ?? .placeholder()) { day in
-                        ForecastDayColumn(day: day)
+                VStack(spacing: Theme.stripGap * deviceScale) {
+                    strip {
+                        ForEach(snapshot?.daily ?? .placeholder()) { day in
+                            ForecastDayColumn(day: day)
+                        }
                     }
-                }
 
-                strip {
-                    ForEach(snapshot?.hourly ?? .placeholder()) { hour in
-                        HourlyBlockColumn(hour: hour)
+                    strip {
+                        ForEach(snapshot?.hourly ?? .placeholder()) { hour in
+                            HourlyBlockColumn(hour: hour)
+                        }
                     }
                 }
             }

@@ -163,6 +163,10 @@ enum Theme {
     static let gutter: CGFloat = 24
     /// Vertical gap between the major blocks of the screen.
     static let blockGap: CGFloat = 26
+    /// The smaller gap between the 7-day and hourly panels. They read as one pair, and
+    /// the tighter spacing is what keeps the page from scrolling on the smallest iPhones
+    /// (13 mini) now that the 7-day panel carries a rain-chance row.
+    static let stripGap: CGFloat = 8
 }
 
 // MARK: - Responsive scale
