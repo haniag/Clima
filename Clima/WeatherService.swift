@@ -133,11 +133,14 @@ final class WeatherService: WeatherProviding {
             including: .current, .daily, .hourly
         )
 
+        let condition = WeatherCondition(weatherKitCondition: current.condition)
+        let temperature = Self.fahrenheit(current.temperature)
+
         return WeatherSnapshot(
-            condition: WeatherCondition(weatherKitCondition: current.condition),
-            temperature: Self.fahrenheit(current.temperature),
+            condition: condition,
+            temperature: temperature,
             daily: Self.dailyForecasts(from: daily),
-            hourly: Self.hourlyBlocks(from: hourly),
+            hourly: Self.hourlyBlocks(from: hourly, now: (condition, temperature)),
             // Stamped when the answer lands, not when the request left, so the time on
             // screen is the age of the data rather than the age of the attempt.
             fetchedAt: Date()
@@ -183,12 +186,25 @@ final class WeatherService: WeatherProviding {
     /// the current day, including ones already past, so the blocks behind us usually do
     /// have a reading to show; where the forecast doesn't reach back far enough, that one
     /// block renders dashes and the other seven stay exactly where they were.
-    private static func hourlyBlocks(from forecast: Forecast<HourWeather>) -> [HourlyForecast] {
+    ///
+    /// The block we're in right now shows `now` — the same live reading the dial points
+    /// at — rather than its forecast. A block's forecast is for the hour it starts at, so
+    /// by the end of its three hours it can be well out of date, and the "now" column
+    /// would disagree with the dial directly above it.
+    private static func hourlyBlocks(
+        from forecast: Forecast<HourWeather>,
+        now: (condition: WeatherCondition, temperature: Int)
+    ) -> [HourlyForecast] {
         let calendar = Calendar.current
-        let start = [HourlyForecast].stripStart(containing: Date())
+        let fetchedAt = Date()
+        let start = [HourlyForecast].stripStart(containing: fetchedAt)
 
         return (0..<8).map { index in
             let date = calendar.date(byAdding: .hour, value: index * 3, to: start) ?? start
+            let block = HourlyForecast(date: date, condition: now.condition, temperature: now.temperature)
+            if block.contains(fetchedAt) {
+                return block
+            }
             guard let hour = forecast.first(
                 where: { calendar.isDate($0.date, equalTo: date, toGranularity: .hour) }
             ) else {
