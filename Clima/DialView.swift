@@ -41,7 +41,7 @@ struct DialView: View {
 
     private static let baseDiameter: CGFloat = 380
     private static let baseHubDiameter: CGFloat = 60
-    private static let baseIconDiameter: CGFloat = 68
+    private static let baseIconDiameter: CGFloat = 70
     private static let baseHubRingWidth: CGFloat = 5.5
     private static let baseHubRingGap: CGFloat = 10
     private static let baseRefreshGlyphWidth: CGFloat = 26

@@ -345,8 +345,9 @@ struct WeatherDialScreen: View {
 
     /// A row of columns on its own panel. The "now" marker sits flush with the panel's
     /// top edge, so the red mark reads as part of the panel rather than floating inside
-    /// it — and it's the only thing distinguishing today/this hour, now that the columns
-    /// no longer differ in colour.
+    /// it — and it's the only thing distinguishing this hour, now that the columns no
+    /// longer differ in colour. The 7-day strip has no marker: it always opens on today,
+    /// so today is simply its first column.
     private func strip<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         let panelShape = RoundedRectangle(cornerRadius: baseStripCornerRadius * deviceScale, style: .continuous)
         return HStack(spacing: 0) {
@@ -361,10 +362,10 @@ struct WeatherDialScreen: View {
         // end in both.
         //
         // 19 is the least that clears the tighter of the two, and it is close to the
-        // most this panel can give: the hourly columns come out 40.75pt, against the
-        // 40pt `baseStripContentWidth` their icons are framed at, so there is about
-        // 0.75pt left in hand. If a future change needs more room here, the number to
-        // reconsider is the marker bar's own width rather than this inset.
+        // most this panel can give: the hourly columns come out about 41.5pt, against
+        // the 41pt `baseStripContentWidth` their icons are framed at, so there is only
+        // about half a point left in hand. If a future change needs more room here, the
+        // number to reconsider is the marker bar's own width rather than this inset.
         .padding(.horizontal, 19 * deviceScale)
         .padding(.bottom, 14 * deviceScale)
         // The panel surface and its edge shading together, BEHIND the columns rather
@@ -399,13 +400,13 @@ struct WeatherDialScreen: View {
 /// Measured from the rendered app rather than guessed: the temperature text is ~24pt
 /// wide at its font, but the condition icons — measured the same way, glyph edge to
 /// glyph edge — only fill about half of their old 26pt frame, so *nominally* matching
-/// the number's width left them looking much smaller than it. 40pt is as far as that
-/// can be pushed back before it outgrows what's actually available: the hourly strip's
-/// 8 columns leave ~43pt each inside the panel, the tightest of the two rows, so this
-/// is close to the ceiling rather than a true pixel match to the number. Scaling this
+/// the number's width left them looking much smaller than it. 41pt is about as far as
+/// that can be pushed before it outgrows what's actually available: the hourly strip's
+/// 8 columns leave ~41.5pt each inside the panel, the tightest of the two rows, so this
+/// is at the ceiling rather than a true pixel match to the number. Scaling this
 /// alongside the panel it sits in keeps that same tight-but-fitting relationship on
 /// every iPhone rather than just the one it was measured on.
-private let baseStripContentWidth: CGFloat = 40
+private let baseStripContentWidth: CGFloat = 41
 
 /// The corner radius of a forecast panel, at `deviceScale` 1. Shared with the settings
 /// drawer, whose open state is meant to be indistinguishable from one of these panels —
@@ -424,7 +425,11 @@ private struct ForecastDayColumn: View {
     }
 
     var body: some View {
-        StripColumn(isActive: isToday) {
+        // Never marked: the strip always opens on today, so the first column already
+        // says which day is today just by where it sits. `StripColumn` still lays out
+        // the marker's height, which keeps the day letters the same distance below the
+        // panel's top edge as the hourly strip's times.
+        StripColumn(isActive: false) {
             Text(day.dayLetter)
                 .climaCaps(size: 15, tracking: 0.6)
                 .foregroundStyle(Theme.panelInk)

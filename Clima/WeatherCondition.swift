@@ -8,12 +8,7 @@ import WeatherKit
 
 /// The fixed, ordered set of weather conditions shown on the dial.
 /// Order here defines position around the dial — keep this list small and deliberate.
-///
-/// Backed by `String` so `DailyForecastCache` can write a condition to disk and read it
-/// back. The raw values are storage keys, not display text — `label` is what the screen
-/// shows — so renaming a case means old cached days for it stop decoding, which is the
-/// harmless outcome: that day falls back to a dash.
-enum WeatherCondition: String, CaseIterable, Hashable, Codable {
+enum WeatherCondition: CaseIterable, Hashable {
     case clear
     case partlyCloudy
     case cloudy

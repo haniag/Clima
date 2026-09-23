@@ -22,7 +22,7 @@ struct WeatherSnapshot {
     /// it converts *from* Fahrenheit. Handing views a `Measurement` instead would just
     /// move that decision to every call site.
     let temperature: Int
-    /// Monday to Sunday of the current week, for the upper strip.
+    /// Today and the six days after it, for the upper strip.
     let daily: [DailyForecast]
     /// Eight 3-hour blocks covering today, midnight to midnight, for the lower strip.
     let hourly: [HourlyForecast]
@@ -146,29 +146,26 @@ final class WeatherService: WeatherProviding {
 
     // MARK: - WeatherKit's shapes, turned into ours
 
-    /// Monday to Sunday of the current week — the seven columns the upper strip draws,
-    /// in the order the strip draws them.
+    /// Today and the six days after it — the seven columns the upper strip draws, in the
+    /// order the strip draws them.
     ///
     /// The slots come first and the forecast is matched into them, rather than the
-    /// forecast being taken in the order WeatherKit sent it. WeatherKit answers with
-    /// today onwards, so earlier in the week there is simply nothing to put in Monday's
-    /// column on a Thursday; building the week first means those columns still exist,
-    /// dated and labelled, showing dashes. Taking the list as given would slide Thursday's
-    /// weather under Monday's letter, which is worse than an empty column — it's a wrong
-    /// one.
-    ///
-    /// Those earlier columns are then filled from `DailyForecastCache`, which is holding
-    /// what Monday's own fetch said back when Monday was today.
+    /// forecast being taken in the order WeatherKit sent it. The two normally agree —
+    /// WeatherKit's daily forecast starts at today too — but only matching by date makes
+    /// it certain: a list that began a day off, or came back short, would otherwise slide
+    /// one day's weather under another day's letter, which is worse than an empty column
+    /// — it's a wrong one. Matched, a day with nothing behind it just shows dashes in its
+    /// own place.
     private static func dailyForecasts(from forecast: Forecast<DayWeather>) -> [DailyForecast] {
         let calendar = Calendar.current
-        let monday = [DailyForecast].weekStart(containing: Date())
+        let today = [DailyForecast].stripStart(containing: Date())
 
-        let week = (0..<7).map { offset in
-            let date = calendar.date(byAdding: .day, value: offset, to: monday) ?? monday
+        return (0..<7).map { offset in
+            let date = calendar.date(byAdding: .day, value: offset, to: today) ?? today
             guard let day = forecast.first(where: { calendar.isDate($0.date, inSameDayAs: date) }) else {
                 return DailyForecast(date: date, condition: nil, highTemp: nil, lowTemp: nil)
             }
-            // Our own `date`, not `day.date`: the column's position in the week is what
+            // Our own `date`, not `day.date`: the column's position on the strip is what
             // the slot decided, and a WeatherKit day begins in the forecast location's
             // time zone, which needn't agree with the phone's about which day it is.
             return DailyForecast(
@@ -178,12 +175,6 @@ final class WeatherService: WeatherProviding {
                 lowTemp: fahrenheit(day.lowTemperature)
             )
         }
-
-        // Write before reading: this fetch's days go in first, so today's reading is
-        // already recorded for when today becomes Tuesday's past. Then the gaps it left
-        // come back out.
-        DailyForecastCache.save(week)
-        return DailyForecastCache.backfill(week)
     }
 
     /// Today's eight 3-hour blocks: 12AM, 3AM, 6AM, 9AM, 12PM, 3PM, 6PM, 9PM.

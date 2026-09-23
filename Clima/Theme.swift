@@ -98,8 +98,8 @@ enum Theme {
     /// lamp casting `pointerBeam` — so it takes a warm sodium-yellow instead.
     ///
     /// That yellow is shared, verbatim, with the two swatches below it: in dark mode
-    /// every index mark in the app — tip, shaft and both strips' "now" markers — is one
-    /// single value. The three stay separate constants only because light mode still
+    /// every index mark in the app — tip, shaft and the hourly strip's "now" marker — is
+    /// one single value. The three stay separate constants only because light mode still
     /// draws its own distinctions between them.
     static let pointerTriangle = dynamic(light: 0xe35656, dark: 0xc7b348)
     /// The dial pointer's hairline shaft. On the light page it's a step duller than the
@@ -116,9 +116,9 @@ enum Theme {
     /// Fully transparent in light mode — light alpha 0 — since a beam only reads against
     /// a dark surface, and in daylight the pointer is just a mark printed on the dial.
     static let pointerBeam = dynamic(light: 0xC6C76A, dark: 0xC6C76A, lightAlpha: 0)
-    /// The "now" marker on the 7-day and hourly panels. It follows the dial pointer
-    /// into dark mode — the same value, not merely a near one — so the app's one index
-    /// mark keeps meaning the same thing, and looking the same, wherever it turns up.
+    /// The "now" marker on the hourly panel. It follows the dial pointer into dark mode
+    /// — the same value, not merely a near one — so the app's one index mark keeps
+    /// meaning the same thing, and looking the same, wherever it turns up.
     ///
     /// This swatch reads at face value now. The marker sits at the very top of its
     /// panel, right where that panel's `InnerShadow` is heaviest, and for as long as the

@@ -31,35 +31,26 @@ struct DailyForecast: Identifiable {
 }
 
 extension Array where Element == DailyForecast {
-    /// The Monday of the week `date` falls in.
+    /// Midnight on the day `date` falls in — where the strip always begins.
     ///
-    /// The strip is a fixed Monday-to-Sunday week, so each weekday keeps the same column
-    /// all week and "today" travels across the strip instead of the strip re-sorting
-    /// itself underneath it every morning. Anchoring on today instead would mean the same
-    /// weekday letter sat in a different place each day.
-    ///
-    /// Monday is hard-coded rather than taken from `Calendar.firstWeekday`, which is
-    /// Sunday in the US and would quietly give a different week to different users.
-    /// `.weekday` is always 1 = Sunday ... 7 = Saturday whatever the locale, so this
-    /// arithmetic finds the most recent Monday everywhere.
-    static func weekStart(containing date: Date) -> Date {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: date)
-        let weekday = calendar.component(.weekday, from: today)
-        let daysSinceMonday = (weekday + 5) % 7
-        return calendar.date(byAdding: .day, value: -daysSinceMonday, to: today) ?? today
+    /// The strip is today and the six days after it, so today is always the first
+    /// column, and its position is enough to say so without a "today" marker. It also
+    /// keeps every column inside what WeatherKit's daily forecast covers, which starts at
+    /// today as well — there's no day on the strip that's already over and so has no
+    /// forecast left to show.
+    static func stripStart(containing date: Date) -> Date {
+        Calendar.current.startOfDay(for: date)
     }
 
-    /// Monday to Sunday of the current week with no weather against them: what the strip
+    /// Today and the six days after it with no weather against them: what the strip
     /// shows before the first reading lands, and after one fails with nothing to fall
     /// back on.
     ///
-    /// Built fresh on each call rather than stored in a `let`, since the current week
-    /// moves and a constant computed at launch would still be showing last week come
-    /// Monday morning.
+    /// Built fresh on each call rather than stored in a `let`, since today moves and a
+    /// constant computed at launch would still be starting on yesterday come midnight.
     static func placeholder(from today: Date = Date()) -> [DailyForecast] {
         let calendar = Calendar.current
-        let start = Self.weekStart(containing: today)
+        let start = Self.stripStart(containing: today)
         return (0..<7).map { offset in
             DailyForecast(
                 date: calendar.date(byAdding: .day, value: offset, to: start) ?? start,
@@ -75,12 +66,12 @@ extension Array where Element == DailyForecast {
     /// no reading.
     static let sample: [DailyForecast] = {
         let calendar = Calendar.current
-        let monday = [DailyForecast].weekStart(containing: Date())
+        let today = [DailyForecast].stripStart(containing: Date())
 
         let conditions: [WeatherCondition] = [.clear, .partlyCloudy, .cloudy, .rain, .storm, .snow, .fog]
         return conditions.enumerated().map { index, condition in
             DailyForecast(
-                date: calendar.date(byAdding: .day, value: index, to: monday) ?? monday,
+                date: calendar.date(byAdding: .day, value: index, to: today) ?? today,
                 condition: condition,
                 highTemp: 75 - index,
                 lowTemp: 58 - index
