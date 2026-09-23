@@ -166,7 +166,9 @@ final class WeatherService: WeatherProviding {
         return (0..<7).map { offset in
             let date = calendar.date(byAdding: .day, value: offset, to: today) ?? today
             guard let day = forecast.first(where: { calendar.isDate($0.date, inSameDayAs: date) }) else {
-                return DailyForecast(date: date, condition: nil, highTemp: nil, lowTemp: nil)
+                return DailyForecast(
+                    date: date, condition: nil, highTemp: nil, lowTemp: nil, precipitationChance: nil
+                )
             }
             // Our own `date`, not `day.date`: the column's position on the strip is what
             // the slot decided, and a WeatherKit day begins in the forecast location's
@@ -175,7 +177,9 @@ final class WeatherService: WeatherProviding {
                 date: date,
                 condition: WeatherCondition(weatherKitCondition: day.condition),
                 highTemp: fahrenheit(day.highTemperature),
-                lowTemp: fahrenheit(day.lowTemperature)
+                lowTemp: fahrenheit(day.lowTemperature),
+                // WeatherKit gives 0.0–1.0; the strip shows a whole percent.
+                precipitationChance: Int((day.precipitationChance * 100).rounded())
             )
         }
     }

@@ -13,13 +13,15 @@ struct DailyForecast: Identifiable {
     /// there's nothing to put in them yet.
     let date: Date
 
-    // Optional, all three, because a column with no reading behind it has to be able to
+    // Optional, all four, because a column with no reading behind it has to be able to
     // say so. The alternative — a placeholder temperature like 0 or -999 — puts a number
     // on screen that the eye reads as a measurement. `nil` can't be misread, and the
     // column renders it as a dash.
     let condition: WeatherCondition?
     let highTemp: Int?
     let lowTemp: Int?
+    /// Chance of rain, snow, etc. at some point in the day, as a whole percent (0–100).
+    let precipitationChance: Int?
 
     /// Single-letter weekday label, e.g. "M" for Monday. A few letters repeat
     /// (Tue/Thu, Sat/Sun) since it's the first letter, not a unique abbreviation.
@@ -56,7 +58,8 @@ extension Array where Element == DailyForecast {
                 date: calendar.date(byAdding: .day, value: offset, to: start) ?? start,
                 condition: nil,
                 highTemp: nil,
-                lowTemp: nil
+                lowTemp: nil,
+                precipitationChance: nil
             )
         }
     }
@@ -69,12 +72,14 @@ extension Array where Element == DailyForecast {
         let today = [DailyForecast].stripStart(containing: Date())
 
         let conditions: [WeatherCondition] = [.clear, .partlyCloudy, .cloudy, .rain, .storm, .snow, .fog]
+        let chances = [0, 10, 30, 80, 100, 60, 20]
         return conditions.enumerated().map { index, condition in
             DailyForecast(
                 date: calendar.date(byAdding: .day, value: index, to: today) ?? today,
                 condition: condition,
                 highTemp: 75 - index,
-                lowTemp: 58 - index
+                lowTemp: 58 - index,
+                precipitationChance: chances[index]
             )
         }
     }()

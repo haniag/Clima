@@ -431,7 +431,8 @@ private let baseStripContentWidth: CGFloat = 41
 /// one number, so the two can't drift apart.
 private let baseStripCornerRadius: CGFloat = 18
 
-/// One column in the 7-day strip: weekday letter, condition icon, high, low.
+/// One column in the 7-day strip: weekday letter, condition icon, high, low, and the
+/// chance of precipitation.
 private struct ForecastDayColumn: View {
     let day: DailyForecast
 
@@ -473,6 +474,15 @@ private struct ForecastDayColumn: View {
             Text(temperatureText(day.lowTemp, useCelsius: useCelsius))
                 .font(Theme.valueFont(scale: deviceScale))
                 .foregroundStyle(Theme.panelInkMuted)
+
+            HStack(spacing: 2 * deviceScale) {
+                Image(systemName: "drop.fill")
+                    .font(.system(size: 9 * deviceScale))
+                    .foregroundStyle(Theme.panelIcon)
+                Text(day.precipitationChance.map { "\($0)%" } ?? "—")
+                    .font(Theme.valueFont(scale: deviceScale))
+                    .foregroundStyle(Theme.panelInkMuted)
+            }
         }
     }
 }
