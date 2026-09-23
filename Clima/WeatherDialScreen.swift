@@ -43,7 +43,24 @@ struct WeatherDialScreen: View {
     // screen's own `.preferredColorScheme` below, rather than up on `ClimaApp`'s
     // WindowGroup, so the Light/Dark switch works in the canvas too.
     @AppStorage("useCelsius") private var useCelsius = false
-    @AppStorage("isDarkMode") private var isDarkMode = false
+
+    /// The Light/Dark switch's setting, or `nil` if it's never been touched — in which
+    /// case the app follows the phone's own appearance. A new key rather than the old
+    /// `isDarkMode`, which always had a value, so nobody starts out pinned to Light.
+    @AppStorage("darkModeOverride") private var darkModeOverride: Bool?
+
+    /// The appearance actually on screen. With no override this is the phone's, since
+    /// `.preferredColorScheme(nil)` below leaves the system's choice in place.
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// What the switch shows and sets: the phone's appearance until it's flipped, and
+    /// from then on whatever it was flipped to.
+    private var isDarkMode: Binding<Bool> {
+        Binding(
+            get: { darkModeOverride ?? (colorScheme == .dark) },
+            set: { darkModeOverride = $0 }
+        )
+    }
 
     /// Set once, at the root, from the real screen width — see `Theme.tunedScreenWidth`
     /// and `EnvironmentValues.deviceScale`. Every fixed size below multiplies by this.
@@ -69,7 +86,7 @@ struct WeatherDialScreen: View {
         // the scroll content reserves room for it.
         ZStack(alignment: .bottom) {
             page
-            SettingsDrawer(useCelsius: $useCelsius, isDarkMode: $isDarkMode)
+            SettingsDrawer(useCelsius: $useCelsius, isDarkMode: isDarkMode)
                 .padding(.bottom, SettingsDrawer.bottomMargin(scale: deviceScale))
         }
         // On the stack, not on the drawer: a fixed-size child can't grow into the safe
@@ -79,14 +96,15 @@ struct WeatherDialScreen: View {
         // which would push it another 34pt up the page.
         .ignoresSafeArea(edges: .bottom)
         .background(Theme.canvas.ignoresSafeArea())
-        // The app's own Light/Dark switch decides the appearance, not the phone's —
-        // so a phone in dark mode doesn't override a drawer that reads "Light".
+        // Follows the phone's Light/Dark setting until the drawer's switch is flipped;
+        // after that the switch wins, so a phone in dark mode doesn't override a
+        // drawer that reads "Light". `nil` is what hands the choice back to the system.
         //
         // It lives here rather than on `ClimaApp`'s WindowGroup because a SwiftUI
         // preview renders this screen directly and never runs the App: with the
-        // modifier up there, flipping the switch in the canvas changed `isDarkMode`
+        // modifier up there, flipping the switch in the canvas changed the setting
         // but nothing on screen, since nothing in the preview was reading it.
-        .preferredColorScheme(isDarkMode ? .dark : .light)
+        .preferredColorScheme(darkModeOverride.map { $0 ? .dark : .light })
         // `.task` rather than `.onAppear` so the fetch is tied to this view's lifetime:
         // if the screen goes away mid-request, the request is cancelled with it.
         .task { await load() }
@@ -346,8 +364,8 @@ struct WeatherDialScreen: View {
     /// A row of columns on its own panel. The "now" marker sits flush with the panel's
     /// top edge, so the red mark reads as part of the panel rather than floating inside
     /// it — and it's the only thing distinguishing this hour, now that the columns no
-    /// longer differ in colour. The 7-day strip has no marker: it always opens on today,
-    /// so today is simply its first column.
+    /// longer differ in colour. The 7-day strip marks today the same way, on its first
+    /// column.
     private func strip<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         let panelShape = RoundedRectangle(cornerRadius: baseStripCornerRadius * deviceScale, style: .continuous)
         return HStack(spacing: 0) {
@@ -425,11 +443,10 @@ private struct ForecastDayColumn: View {
     }
 
     var body: some View {
-        // Never marked: the strip always opens on today, so the first column already
-        // says which day is today just by where it sits. `StripColumn` still lays out
-        // the marker's height, which keeps the day letters the same distance below the
-        // panel's top edge as the hourly strip's times.
-        StripColumn(isActive: false) {
+        // Marked even though the strip always opens on today, so today is always the
+        // first column: the marker is what the hourly strip below uses to say "now",
+        // and the two rows read as one instrument when both carry it.
+        StripColumn(isActive: isToday) {
             Text(day.dayLetter)
                 .climaCaps(size: 15, tracking: 0.6)
                 .foregroundStyle(Theme.panelInk)

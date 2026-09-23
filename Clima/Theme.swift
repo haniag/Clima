@@ -38,18 +38,8 @@ enum Theme {
     static let dialIconSelected = dynamic(light: 0x61616f, dark: 0xF0F0E6)
     /// Its two neighbours — present, but clearly not the reading.
     static let dialIconInactive = dynamic(light: 0xe3e2da, dark: 0x4A4A50)
-    /// The refresh button's face — darker in the middle, lifting to a lighter edge.
-    static let hubFaceCenter = dynamic(light: 0xded7cb, dark: 0x3A3A36)
-    static let hubFaceEdge = dynamic(light: 0xe8e3d7, dark: 0x4A4A44)
-    /// The bezel around it: brightest where it meets the button, falling away to shadow
-    /// at its outer edge, so the button reads as seated in a raised boss.
-    static let hubRingInner = dynamic(light: 0x938F84, dark: 0x2E2E2A)
-    static let hubRingOuter = dynamic(light: 0x5F5F53, dark: 0x1B1B19)
-    /// The refresh glyph moulded into that button face. Lighter than the face rather
-    /// than darker, because the reference draws it raised and lit from above, not
-    /// printed on — the shadow underneath it is what makes it legible at this little
-    /// contrast, so the two belong together.
-    static let hubGlyph = dynamic(light: 0xF1ECE0, dark: 0x9C9C93)
+    // The refresh button has no colours here: it's drawn from artwork in the asset
+    // catalog (`refreshButton`, `refreshButtonPressed`), which carries its own.
 
     /// The panel behind the 7-day and hourly strips — and behind the settings drawer
     /// once it's open, so what the cover slides away from matches the strips above it.

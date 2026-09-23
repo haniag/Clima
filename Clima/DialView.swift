@@ -30,8 +30,6 @@ struct DialView: View {
     /// The wheel's rotation, in degrees. Starts aligned to .clear so there's somewhere
     /// to animate *from* on first appearance, rather than materialising already settled.
     @State private var wheelRotation: Double = -WeatherCondition.clear.angle
-    /// Turns the refresh glyph along with the wheel, so the button visibly drives it.
-    @State private var refreshSpin: Double = 0
 
     // MARK: - Sizing
     //
@@ -44,7 +42,6 @@ struct DialView: View {
     private static let baseIconDiameter: CGFloat = 70
     private static let baseHubRingWidth: CGFloat = 5.5
     private static let baseHubRingGap: CGFloat = 10
-    private static let baseRefreshGlyphWidth: CGFloat = 26
     /// The pointer's tip: a wide, shallow arrowhead at a flat 2:1, which reads as
     /// pointing at the rim rather than perching on it now that the rim trace under it
     /// is finer. One size for both pages — note that on the dark page this triangle is
@@ -85,24 +82,16 @@ struct DialView: View {
     private var iconDiameter: CGFloat { Self.baseIconDiameter * deviceScale }
     private var iconInset: CGFloat { diameter / 9 }
 
-    /// The bezel ring around the button.
+    /// The bezel ring around the button. The artwork draws its own bezel now, but the
+    /// button's overall size — face plus bezel — is still this, so the canopy's notch
+    /// and the hub's overhang keep the proportions they were tuned at.
     private var hubRingWidth: CGFloat { Self.baseHubRingWidth * deviceScale }
-    /// Where the imaginary light sits, in the same "0 = top, clockwise" convention the
-    /// dial's angles use. An angle rather than a length, so — unlike everything else on
-    /// this page — it does NOT scale with screen size. Change this one number to swing
-    /// the highlights around the ring; -35 puts the main catch at the upper left.
-    private static let hubLightAngle: Double = -35
     private var hubRingDiameter: CGFloat { hubDiameter + 2 * hubRingWidth }
     /// Page colour left showing between the bezel and the canopy's notch, so the two
     /// never touch.
     private var hubRingGap: CGFloat { Self.baseHubRingGap * deviceScale }
     /// The hole the canopy leaves for the whole assembly: bezel plus that gap.
     private var hubGapDiameter: CGFloat { hubRingDiameter + 2 * hubRingGap }
-
-    /// The refresh glyph's width, which is also its ring's outer diameter — a little
-    /// under half the button face it sits on. Its height follows from
-    /// `RefreshGlyph.aspectRatio`, since the arrowhead makes it taller than it is wide.
-    private var refreshGlyphWidth: CGFloat { Self.baseRefreshGlyphWidth * deviceScale }
 
     private var pointerTriangleWidth: CGFloat { Self.basePointerTriangleWidth * deviceScale }
     private var pointerTriangleHeight: CGFloat { Self.basePointerTriangleHeight * deviceScale }
@@ -278,12 +267,26 @@ struct DialView: View {
         // fraction that drifts every time the reach is retuned.
         let iconMidStop = (iconInset + iconDiameter / 2 - mouthY) / length
 
+        // The spokes either side of the lit wedge close in towards the wheel's centre
+        // while the beam opens out, so from about the icon's middle down the beam used
+        // to run straight across them. It's cut to the wedge between the spokes instead
+        // — held `blur` in from them, so the softened edge fades out before the spoke
+        // rather than being sliced off at it — and the lit patch narrows again at its
+        // foot the way light in a gap between two walls would.
+        let blur = 9 * deviceScale
+        let spokeHalfAngle = Self.stepAngle / 2
+        // Moving a wedge's apex down its centre line by d moves each side in by
+        // d · sin(halfAngle), so this is the apex that puts both sides `blur` inside
+        // the spokes.
+        let insetApexY = diameter / 2 + blur / sin(spokeHalfAngle * .pi / 180)
+
         return LightBeam(
             mouthY: mouthY,
             mouthWidth: pointerTriangleWidth,
             halfAngle: 19,
             length: length
         )
+            .intersection(SpokeWedge(apexY: insetApexY, halfAngle: spokeHalfAngle))
             .fill(
                 LinearGradient(
                     stops: [
@@ -300,8 +303,11 @@ struct DialView: View {
             )
             // Softens the wedge's straight sides into a glow, rather than a hard-edged
             // shape of colour sitting on the canopy.
-            .blur(radius: 9 * deviceScale)
+            .blur(radius: blur)
             .frame(width: diameter, height: diameter)
+            // The exact wedge this time, not the inset one: whatever the blur still
+            // spreads toward a spoke stops at the spoke itself.
+            .clipShape(SpokeWedge(apexY: diameter / 2, halfAngle: spokeHalfAngle))
             .clipShape(canopyShape)
             .blendMode(.plusLighter)
             .allowsHitTesting(false)
@@ -337,102 +343,15 @@ struct DialView: View {
 
     // MARK: - The refresh hub
 
-    /// A specular pass laid over the bezel's base gradient: a bright arc where the ring
-    /// faces the light, a weaker one opposite it where the page bounces light back, and
-    /// dark arcs on the two flanks between them. It paints white and black over the base
-    /// colours rather than introducing new ones, so the ring's own palette still reads.
-    ///
-    /// Every stop fades to a transparent version of its OWN colour rather than to
-    /// `.clear`, which would interpolate through transparent black and dirty the
-    /// highlights on the way out.
-    private var hubRingLight: AngularGradient {
-        AngularGradient(
-            stops: [
-                .init(color: .white.opacity(0.65), location: 0.00),
-                .init(color: .white.opacity(0.00), location: 0.10),
-                .init(color: .black.opacity(0.00), location: 0.15),
-                .init(color: .black.opacity(0.30), location: 0.25),
-                .init(color: .black.opacity(0.00), location: 0.35),
-                .init(color: .white.opacity(0.00), location: 0.40),
-                .init(color: .white.opacity(0.28), location: 0.50),
-                .init(color: .white.opacity(0.00), location: 0.60),
-                .init(color: .black.opacity(0.00), location: 0.65),
-                .init(color: .black.opacity(0.30), location: 0.75),
-                .init(color: .black.opacity(0.00), location: 0.85),
-                .init(color: .white.opacity(0.00), location: 0.90),
-                .init(color: .white.opacity(0.65), location: 1.00),
-            ],
-            center: .center,
-            // AngularGradient starts at 3 o'clock, so -90 puts location 0 at the top
-            // before the light angle swings it round.
-            angle: .degrees(Self.hubLightAngle - 90)
-        )
-    }
-
+    /// The button is artwork now rather than drawn: `refreshButton` and
+    /// `refreshButtonPressed` in the asset catalog, each with a Dark appearance, so the
+    /// right one of the four is picked by the pressed state and the app's own Light/Dark
+    /// switch without any code choosing between them.
     private var refreshButton: some View {
-        Button(action: handleRefreshTap) {
-            ZStack {
-                // The bezel, brightest where it meets the button and falling away to
-                // shadow at its outer edge.
-                Circle()
-                    .strokeBorder(
-                        RadialGradient(
-                            colors: [Theme.hubRingInner, Theme.hubRingOuter],
-                            center: .center,
-                            startRadius: hubDiameter / 2,
-                            endRadius: hubRingDiameter / 2
-                        ),
-                        lineWidth: hubRingWidth
-                    )
-                    .frame(width: hubRingDiameter, height: hubRingDiameter)
-                    .overlay(
-                        Circle()
-                            .strokeBorder(hubRingLight, lineWidth: hubRingWidth)
-                            .frame(width: hubRingDiameter, height: hubRingDiameter)
-                    )
-
-                // The button face. Two shadows rather than one is what reads as height:
-                // a wide ambient one for the lift, and a tight contact one that keeps it
-                // anchored to the bezel instead of floating free of it.
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [Theme.hubFaceCenter, Theme.hubFaceEdge],
-                            center: .center,
-                            startRadius: 0,
-                            endRadius: hubDiameter / 2
-                        )
-                    )
-                    .frame(width: hubDiameter, height: hubDiameter)
-                    .shadow(color: .black.opacity(0.30), radius: 6 * deviceScale, y: 4 * deviceScale)
-                    .shadow(color: .black.opacity(0.18), radius: 1.5 * deviceScale, y: 1 * deviceScale)
-
-                // Round caps and joins throughout: the reference's arm ends and its
-                // arrowhead are all softened, which is also what the rest of the app's
-                // moulded surfaces do.
-                RefreshGlyph()
-                    .stroke(
-                        Theme.hubGlyph,
-                        style: StrokeStyle(
-                            lineWidth: RefreshGlyph.strokeWidth(forWidth: refreshGlyphWidth),
-                            lineCap: .round,
-                            lineJoin: .round
-                        )
-                    )
-                    .frame(
-                        width: refreshGlyphWidth,
-                        height: refreshGlyphWidth * RefreshGlyph.aspectRatio
-                    )
-                    // What makes a glyph barely a shade lighter than the face read at
-                    // all. Straight down, like every other shadow in the app.
-                    .shadow(color: .black.opacity(0.28), radius: 1.2 * deviceScale, y: 1.2 * deviceScale)
-                    .rotationEffect(.degrees(refreshSpin), anchor: RefreshGlyph.ringCenterUnitPoint)
-            }
-        }
-        .contentShape(Circle())
-        .buttonStyle(.plain)
-        .frame(width: hubRingDiameter, height: hubRingDiameter)
-        .accessibilityLabel("Refresh weather")
+        Button(action: handleRefreshTap) {}
+            .buttonStyle(RefreshButtonStyle(diameter: hubRingDiameter))
+            .frame(width: hubRingDiameter, height: hubRingDiameter)
+            .accessibilityLabel("Refresh weather")
     }
 
     // MARK: - Motion
@@ -462,12 +381,14 @@ struct DialView: View {
     /// full turn past the target guarantees visible motion every time, landing on the
     /// exact same spot a full rotation later.
     ///
-    /// Both turn CLOCKWISE — a positive angle, since SwiftUI measures rotation with the
-    /// y-axis pointing down — and they turn together, by the same amount, in the same
-    /// call. That direction is the refresh glyph's: its arrowhead chases its own tail
-    /// clockwise, and a button whose mark points one way while the button spins the
-    /// other reads as a mistake. The wheel follows the button rather than the other way
-    /// round, because the button is what the finger pushed.
+    /// The wheel turns CLOCKWISE — a positive angle, since SwiftUI measures rotation with
+    /// the y-axis pointing down. That direction is the refresh glyph's: its arrowhead
+    /// chases its own tail clockwise, and a button whose mark points one way while the
+    /// wheel it drives spins the other reads as a mistake.
+    ///
+    /// The glyph itself no longer spins: it's part of the button artwork now, and turning
+    /// the whole image would swing its lighting and shadow round with it. The artwork's
+    /// pressed state is what answers the finger instead.
     private func handleRefreshTap() {
         // Under the finger, not at the end of the spin: this one is the button being
         // pressed, so it has to answer the touch immediately. The wheel's own click
@@ -475,7 +396,6 @@ struct DialView: View {
         SoundPlayer.shared.play(.refresh)
         withAnimation(.spring(response: 0.75, dampingFraction: 0.55)) {
             wheelRotation += 360
-            refreshSpin += 360
         } completion: {
             SoundPlayer.shared.play(.wheelClick)
         }
@@ -515,6 +435,28 @@ private struct LightBeam: Shape {
         path.addLine(to: CGPoint(x: rect.midX + halfMouth, y: mouthY))
         path.addLine(to: CGPoint(x: rect.midX + halfFoot, y: footY))
         path.addLine(to: CGPoint(x: rect.midX - halfFoot, y: footY))
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// The wedge between the two spokes either side of the pointer, once the wheel has
+/// settled: a triangle with its apex on the rect's centre line at `apexY`, opening
+/// upwards by `halfAngle` either side of vertical, out to the rect's top edge.
+///
+/// With the apex at the wheel's centre it's exactly the lit condition's wedge; pushed
+/// further down, the same shape with both sides moved inwards.
+private struct SpokeWedge: Shape {
+    var apexY: CGFloat
+    var halfAngle: Double
+
+    func path(in rect: CGRect) -> Path {
+        let halfTop = apexY * tan(halfAngle * .pi / 180)
+
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY + apexY))
+        path.addLine(to: CGPoint(x: rect.midX - halfTop, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.midX + halfTop, y: rect.minY))
         path.closeSubpath()
         return path
     }
@@ -707,89 +649,40 @@ private struct Fan: Shape {
     }
 }
 
-/// The refresh button's glyph, traced off the reference image: a thick ring with a bite
-/// taken out of its upper right, and a right-angled chevron arrowhead standing in that
-/// bite — apex pointing outwards at about 2 o'clock, one arm swept back over the ring's
-/// top, the other reaching in towards the ring's centre.
+/// Draws the refresh button from its artwork, swapping to the pressed image while a
+/// finger is down.
 ///
-/// Drawn by hand rather than borrowed from SF Symbols, because none of the stock
-/// circular arrows match it: they all cap the arc with a solid triangular head, and the
-/// one this replaced (`arrow.triangle.2.circlepath`) draws two arrows chasing each other
-/// rather than a single one.
-///
-/// Every number below is a measurement taken off that reference in the reference's own
-/// pixels, and the whole drawing is scaled uniformly into whatever rect it's handed — so
-/// each constant can be checked back against the image instead of reading as an
-/// unexplained decimal. This is an open path: stroke it, don't fill it.
-struct RefreshGlyph: Shape {
-    /// The artwork's bounds in those reference pixels: the ring's outer circle, plus the
-    /// chevron's upper arm standing above it. The width is the ring's outer diameter,
-    /// which is why the ring's centre lands on exactly half of it.
-    private static let box = CGRect(x: 7.9, y: 4, width: 42.2, height: 54.3)
+/// The four images share one 155px canvas with the button's circle in exactly the same
+/// place in each — 109px across, centred at (66.5, 58.5) — and a drop shadow spilling
+/// down and to the right of it in the two unpressed ones. So the whole canvas is drawn,
+/// shadow included, scaled so that circle comes out `diameter` across, and shifted so
+/// the circle (not the canvas) lands in the middle of the button's frame. Swapping
+/// images then changes the shadow and the shading without the button moving at all.
+private struct RefreshButtonStyle: ButtonStyle {
+    let diameter: CGFloat
 
-    private static let ringCenter = CGPoint(x: 29, y: 37.2)
-    /// The middle of the stroke rather than its outer edge, since this path gets stroked
-    /// rather than filled — the reference's ring runs from radius 13.9 to 21.1.
-    private static let ringRadius: CGFloat = 17.5
-    /// Where the ring stops either side of the bite. Measured the way SwiftUI measures,
-    /// 0° at 3 o'clock and increasing clockwise, so the two are ordered start-then-end
-    /// the long way round: the ~44° between them is the gap, not the arc.
-    ///
-    /// The reference cuts this end off flat at -7.4°; a round cap put half a stroke of
-    /// bulge past that and closed the gap up too far, so the arc is started at 3 o'clock
-    /// instead and the cap fills the difference.
-    private static let ringStart = Angle.degrees(0)
-    private static let ringEnd = Angle.degrees(315.7)
+    private static let canvas: CGFloat = 155
+    private static let circleDiameter: CGFloat = 109
+    private static let circleCenter = CGPoint(x: 66.5, y: 58.5)
 
-    /// The chevron. Its arms run at 45° either side of straight-out, which is what makes
-    /// the head a right angle; the outward-facing one is the shorter of the two, and the
-    /// inward one stops just short of the ring's centre.
-    private static let apex = CGPoint(x: 46.4, y: 19)
-    private static let upperArmTip = CGPoint(x: 35, y: 7.6)
-    private static let innerArmTip = CGPoint(x: 33.2, y: 32.2)
+    func makeBody(configuration: Configuration) -> some View {
+        // Points per artwork pixel.
+        let scale = diameter / Self.circleDiameter
+        let canvasSize = Self.canvas * scale
 
-    /// Taller than it is wide, because of that upper arm — callers sizing the glyph need
-    /// this to avoid squashing it.
-    static let aspectRatio = box.height / box.width
-
-    /// Where the ring's centre falls within the glyph's frame. The spin animation has to
-    /// turn about this rather than about the frame's middle: the arrowhead pushes the
-    /// frame's centre well above the ring's, and spinning about it swings the whole ring
-    /// round in a small circle instead of rotating it on the spot.
-    static let ringCenterUnitPoint = UnitPoint(
-        x: (ringCenter.x - box.minX) / box.width,
-        y: (ringCenter.y - box.minY) / box.height
-    )
-
-    /// The stroke the reference is drawn with, ~17.5% of the ring's outer diameter — a
-    /// good deal heavier than a `.semibold` SF Symbol at the same size. Measured off the
-    /// reference where its luminance crosses halfway between glyph and face, rather than
-    /// by counting fully-lit pixels, which undercounts by most of the soft edge.
-    static func strokeWidth(forWidth width: CGFloat) -> CGFloat {
-        width * 7.41 / box.width
-    }
-
-    func path(in rect: CGRect) -> Path {
-        let scale = min(rect.width / Self.box.width, rect.height / Self.box.height)
-        let originX = rect.midX - Self.box.midX * scale
-        let originY = rect.midY - Self.box.midY * scale
-        func place(_ point: CGPoint) -> CGPoint {
-            CGPoint(x: originX + point.x * scale, y: originY + point.y * scale)
-        }
-
-        var path = Path()
-        // `clockwise: false` sweeps in the direction of increasing angle, which reads as
-        // clockwise on screen — the same convention `Fan` uses above.
-        path.addArc(
-            center: place(Self.ringCenter), radius: Self.ringRadius * scale,
-            startAngle: Self.ringStart, endAngle: Self.ringEnd, clockwise: false
-        )
-        // A separate subpath, so the chevron isn't joined to the end of the arc by a
-        // stray line across the gap.
-        path.move(to: place(Self.upperArmTip))
-        path.addLine(to: place(Self.apex))
-        path.addLine(to: place(Self.innerArmTip))
-        return path
+        return Image(configuration.isPressed ? "refreshButtonPressed" : "refreshButton")
+            .resizable()
+            .interpolation(.high)
+            .frame(width: canvasSize, height: canvasSize)
+            // `offset` rather than a bigger frame, so the shadow's extra width doesn't
+            // push the button's own layout off centre.
+            .offset(
+                x: (Self.canvas / 2 - Self.circleCenter.x) * scale,
+                y: (Self.canvas / 2 - Self.circleCenter.y) * scale
+            )
+            .frame(width: diameter, height: diameter)
+            // Only the circle takes touches, not the corners of its square frame.
+            .contentShape(Circle())
     }
 }
 
