@@ -241,12 +241,17 @@ struct WeatherDialScreen: View {
             }
             .padding(.horizontal, Theme.gutter * deviceScale)
             // Room for the bar the page now scrolls behind: the bar itself, the margin
-            // holding it off the screen's edge, and a normal block gap above it. The
-            // stack ignores the bottom safe area, so the scroll view is no longer keeping
-            // any of that strip clear on its own.
+            // holding it off the screen's edge, and a gap above it. The stack ignores the
+            // bottom safe area, so the scroll view is no longer keeping any of that strip
+            // clear on its own.
+            //
+            // `stripGap` rather than `blockGap`: the bar has the panels' width, corners
+            // and moulded edge, so it reads as the third panel in their stack, and needs
+            // no more room above it than the hourly one leaves under the 7-day. (It's
+            // pinned to the bottom, so any spare height on a taller phone lands here.)
             .padding(.bottom, SettingsDrawer.height(scale: deviceScale)
                 + SettingsDrawer.bottomMargin(scale: deviceScale)
-                + Theme.blockGap * deviceScale)
+                + Theme.stripGap * deviceScale)
         }
         // Only scroll when the content genuinely doesn't fit: on a large phone the page
         // should sit still, not bounce.
@@ -535,7 +540,10 @@ struct WeatherDialScreen: View {
     private func stripPanel<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         let panelShape = RoundedRectangle(cornerRadius: baseStripCornerRadius * deviceScale, style: .continuous)
         return content()
-        .padding(.bottom, 14 * deviceScale)
+        // Trimmed from 14, along with the column's top padding, when the hourly strip
+        // gained its rain-chance row — the two together are what keep the page from
+        // scrolling on a 16 Pro-proportioned screen.
+        .padding(.bottom, 10 * deviceScale)
         // The panel surface and its edge shading together, BEHIND the columns rather
         // than the shading lying over them. The "now" marker is flush with the panel's
         // top edge, right where that shading is heaviest, so over the top it came out
@@ -707,7 +715,7 @@ private struct HourlyColumn: View {
                 Rectangle()
                     .fill(Theme.panelInkMuted)
                     .frame(width: 1 * deviceScale)
-                    .padding(.top, 18 * deviceScale)
+                    .padding(.top, 14 * deviceScale)
             }
         }
     }
@@ -741,7 +749,9 @@ private struct StripColumn<Content: View>: View {
             VStack(spacing: 7 * deviceScale) {
                 content
             }
-            .padding(.top, 10 * deviceScale)
+            // Measured from the marker's slot, so the triangle's tip still clears the
+            // heading beneath it.
+            .padding(.top, 6 * deviceScale)
             .lineLimit(1)
             .minimumScaleFactor(0.7)
         }
