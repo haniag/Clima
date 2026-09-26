@@ -1,17 +1,17 @@
 {
   "images" : [
     {
-      "filename" : "drizzle.png",
+      "filename" : "partlyCloudy_Moon.png",
       "idiom" : "universal",
       "scale" : "1x"
     },
     {
-      "filename" : "drizzle@2x.png",
+      "filename" : "partlyCloudy_Moon@2x.png",
       "idiom" : "universal",
       "scale" : "2x"
     },
     {
-      "filename" : "drizzle@3x.png",
+      "filename" : "partlyCloudy_Moon@3x.png",
       "idiom" : "universal",
       "scale" : "3x"
     }

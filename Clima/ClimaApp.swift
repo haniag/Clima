@@ -9,12 +9,13 @@ import SwiftUI
 
 @main
 struct ClimaApp: App {
-    /// The live WeatherKit-backed service, built once for the app's lifetime.
+    /// The live weather source — WeatherKit, or the new service once it's been switched
+    /// to — built once for the app's lifetime.
     ///
     /// `@State` rather than `let` because a `let` on an `App` is re-evaluated whenever
     /// the body is. That would throw away the service, and with it the
     /// `CLLocationManager` and the geocoded Simulator ZIP it has cached.
-    @State private var weatherService = WeatherService()
+    @State private var weatherService = WeatherSourceSwitch()
 
     var body: some Scene {
         WindowGroup {

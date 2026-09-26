@@ -21,6 +21,9 @@ struct DialView: View {
     /// rather than confidently indicating whichever condition a default landed on.
     let condition: WeatherCondition?
     var onRefresh: () -> Void = {}
+    /// A triple-tap on the icon under the pointer — the hidden switch between weather
+    /// services. The dial only reports the tap; what it does is the screen's business.
+    var onIconTripleTap: () -> Void = {}
 
     /// How much bigger or smaller this screen is than the iPhone 16 Pro this dial was
     /// tuned on (see `Theme.tunedScreenWidth`). Every size below multiplies by this, so
@@ -37,7 +40,12 @@ struct DialView: View {
     // Pro, 402pt wide) — the instance properties below multiply each one by
     // `deviceScale` so the dial fills the same proportion of the screen everywhere.
 
-    private static let baseDiameter: CGFloat = 380
+    /// 401, up from the 380 it was tuned at with seven slots. The canopy always shows
+    /// three wedges, and at eight slots a wedge is 45° rather than 51.4°, so the same
+    /// three wedges span less of the circle. The larger wheel brings the canopy's painted
+    /// width (`canopyWidth`) back to the ~370pt the forecast panels were tuned against —
+    /// any narrower and the hourly strip's eight 41pt columns no longer fit inside it.
+    private static let baseDiameter: CGFloat = 401
     private static let baseHubDiameter: CGFloat = 60
     private static let baseIconDiameter: CGFloat = 70
     private static let baseHubRingWidth: CGFloat = 5.5
@@ -99,7 +107,7 @@ struct DialView: View {
     /// Static so `canopyWidth(scale:)` can reach it without a `DialView` instance —
     /// one definition of the wedge angle, shared by the shape and by the layout number
     /// the screen reads back.
-    private static let stepAngle = 360.0 / Double(WeatherCondition.allCases.count)
+    private static let stepAngle = 360.0 / Double(WeatherCondition.dialSlots.count)
 
     /// Centre of the refresh hub, in the same coordinate space as the canopy: on the
     /// canopy's bottom edge, a quarter of it tucked up inside.
@@ -125,7 +133,7 @@ struct DialView: View {
 
             // Over the shadow, not under it. The rim shading is heaviest exactly where
             // the tip sits, so underneath it the tip read as a darkened version of
-            // `Theme.pointerTriangle` rather than as the colour itself — and the shaft
+            // `Theme.indexMark` rather than as the colour itself — and the shaft
             // below, which has always drawn above the shadow, didn't match it. Still
             // under the rim trace and the hub, so only its relationship to the shadow
             // has changed.
@@ -157,6 +165,18 @@ struct DialView: View {
                 .frame(width: diameter, height: diameter)
 
             pointerShaft
+
+            // The hidden switch between weather services, over the icon the pointer is
+            // on. A fixed spot rather than a gesture on the icon itself: the wheel turns
+            // so that whichever icon is current sits here, and the layers above the wheel
+            // would take the tap first anyway. Nothing marks it as tappable, on purpose,
+            // and it's kept out of VoiceOver for the same reason.
+            Color.clear
+                .frame(width: iconDiameter, height: iconDiameter)
+                .contentShape(Rectangle())
+                .onTapGesture(count: 3, perform: onIconTripleTap)
+                .position(x: diameter / 2, y: iconInset + iconDiameter / 2)
+                .accessibilityHidden(true)
 
             refreshButton
                 .position(hubCenter)
@@ -193,15 +213,17 @@ struct DialView: View {
             Circle()
                 .fill(Theme.dialFace)
 
-            ForEach(WeatherCondition.allCases, id: \.self) { c in
+            ForEach(WeatherCondition.dialSlots, id: \.self) { c in
+                // The lit slot draws the current condition's own icon, so a clear night
+                // shows its moon in the clear slot. Compares against an optional, so when
+                // there's no reading nothing is lit and every slot shows its usual icon.
+                let isLit = condition?.dialSlot == c
                 spoke(offset: iconInset) {
-                    Image(c.iconName)
+                    Image(isLit ? condition!.iconName : c.iconName)
                         .resizable()
                         .scaledToFit()
                         .frame(width: iconDiameter, height: iconDiameter)
-                        // Compares against an optional, so when there's no reading this
-                        // is false for every icon and none of them lights up.
-                        .foregroundStyle(c == condition ? Theme.dialIconSelected : Theme.dialIconInactive)
+                        .foregroundStyle(isLit ? Theme.dialIconSelected : Theme.dialIconInactive)
                 }
                 .rotationEffect(.degrees(c.angle))
 
@@ -240,7 +262,7 @@ struct DialView: View {
     /// `pointerShaft` already had, so both ends of the mark read as one.
     private var pointerTriangle: some View {
         Triangle()
-            .fill(Theme.pointerTriangle)
+            .fill(Theme.indexMark)
             .frame(width: pointerTriangleWidth, height: pointerTriangleHeight)
     }
 
@@ -337,7 +359,7 @@ struct DialView: View {
 
     private func pointerLine(height: CGFloat) -> some View {
         Rectangle()
-            .fill(Theme.pointerLine)
+            .fill(Theme.indexMark)
             .frame(width: 1.5 * deviceScale, height: max(height, 0))
     }
 
@@ -688,6 +710,13 @@ private struct RefreshButtonStyle: ButtonStyle {
 
 #Preview("Reading") {
     DialView(condition: .rain)
+        .padding(.bottom, DialView.hubOverhang(scale: 1))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.canvas)
+}
+
+#Preview("Clear night") {
+    DialView(condition: .clearNight)
         .padding(.bottom, DialView.hubOverhang(scale: 1))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.canvas)

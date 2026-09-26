@@ -71,7 +71,7 @@ extension Array where Element == DailyForecast {
         let calendar = Calendar.current
         let today = [DailyForecast].stripStart(containing: Date())
 
-        let conditions: [WeatherCondition] = [.clear, .partlyCloudy, .cloudy, .rain, .storm, .snow, .fog]
+        let conditions: [WeatherCondition] = [.clear, .partlyCloudy, .cloudy, .rain, .storm, .snow, .cloudy]
         let chances = [0, 10, 30, 80, 100, 60, 20]
         return conditions.enumerated().map { index, condition in
             DailyForecast(

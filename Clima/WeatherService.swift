@@ -22,10 +22,29 @@ struct WeatherSnapshot {
     /// it converts *from* Fahrenheit. Handing views a `Measurement` instead would just
     /// move that decision to every call site.
     let temperature: Int
+    /// What the condition is called under the dial — "Sunny", "Light Rain".
+    ///
+    /// Carried as text rather than worked out from `condition`, because a service that
+    /// has its own words for the weather should get to use them: the dial only has eight
+    /// slots, but "Drizzle" is a better caption than the "Rainy" its slot is named for.
+    let conditionLabel: String
+    /// Relative humidity as a whole percent, or nil when the service didn't send one.
+    let humidity: Int?
+    /// How much fell in the last hour, in inches, or nil when the service didn't say.
+    ///
+    /// Inches for the same reason `temperature` is Fahrenheit: it's what the rest of the
+    /// app stores, and `precipitationText(_:useMetric:)` in Theme is the one place that
+    /// converts. The new service reports it directly (`precip1Hour`); for WeatherKit it's
+    /// the amount in the last full hour of the hourly forecast.
+    let precipitationLastHour: Double?
     /// Today and the six days after it, for the upper strip.
     let daily: [DailyForecast]
-    /// Eight 3-hour blocks covering today, midnight to midnight, for the lower strip.
-    let hourly: [HourlyForecast]
+    /// Every hour from three hours ago through the midnight that ends tomorrow, one each,
+    /// for the lower strip — see `HourlyForecast.stripStart`/`stripEnd`.
+    ///
+    /// A `var`, unlike the rest, so `WeatherSourceSwitch` can fill its gaps from
+    /// `HourlyCache` after the service has answered.
+    var hourly: [HourlyForecast]
 
     /// When this reading was taken.
     ///
@@ -41,6 +60,11 @@ struct WeatherSnapshot {
 /// WeatherKit throw through it.
 enum WeatherServiceError: LocalizedError {
     case timedOut(seconds: Int)
+    /// The new weather service has no address or no API key yet — see `NewWeatherService`.
+    case notConfigured
+    /// The new weather service answered, but not with a reading: an HTTP error (a 401
+    /// usually means a bad API key), or a body missing the fields we need.
+    case badResponse(status: Int)
 
     var errorDescription: String? {
         switch self {
@@ -51,6 +75,11 @@ enum WeatherServiceError: LocalizedError {
             // it's the same situation. The value is kept on the case for the log, where
             // knowing which limit fired is worth something.
             return "The weather service took too long to answer. Tap the hub to try again."
+        case .notConfigured:
+            return "The new weather service isn't set up yet."
+        case .badResponse:
+            // The status code goes to the log, not the screen — see `WeatherErrorMessage`.
+            return "Couldn't get the weather right now. Tap the hub to try again."
         }
     }
 }
@@ -128,19 +157,33 @@ final class WeatherService: WeatherProviding {
         // together, so the dial and both strips are guaranteed to describe the same
         // moment — three separate calls could straddle a condition change and leave the
         // dial disagreeing with the strip directly under it.
+        //
+        // The hours are asked for by date, to cover exactly the strip: WeatherKit's
+        // default hourly range starts at the current hour and runs out partway through
+        // tomorrow. The end is an hour past the strip's last column, so that column's
+        // hour is inside the range.
+        let now = Date()
+        let hoursEnd = Calendar.current.date(
+            byAdding: .hour, value: 1, to: [HourlyForecast].stripEnd(containing: now)
+        ) ?? [HourlyForecast].stripEnd(containing: now)
         let (current, daily, hourly) = try await weatherKit.weather(
             for: location,
-            including: .current, .daily, .hourly
+            including: .current, .daily,
+            .hourly(startDate: [HourlyForecast].stripStart(containing: now), endDate: hoursEnd)
         )
 
-        let condition = WeatherCondition(weatherKitCondition: current.condition)
+        let condition = WeatherCondition(weatherKitCondition: current.condition, isDaylight: current.isDaylight)
         let temperature = Self.fahrenheit(current.temperature)
 
         return WeatherSnapshot(
             condition: condition,
             temperature: temperature,
+            conditionLabel: condition.label,
+            // WeatherKit gives 0.0–1.0; the readout shows a whole percent.
+            humidity: Int((current.humidity * 100).rounded()),
+            precipitationLastHour: Self.precipitationLastHour(from: hourly),
             daily: Self.dailyForecasts(from: daily),
-            hourly: Self.hourlyBlocks(from: hourly, now: (condition, temperature)),
+            hourly: Self.hourlyForecasts(from: hourly, now: (condition, temperature)),
             // Stamped when the answer lands, not when the request left, so the time on
             // screen is the age of the data rather than the age of the attempt.
             fetchedAt: Date()
@@ -159,9 +202,13 @@ final class WeatherService: WeatherProviding {
     /// one day's weather under another day's letter, which is worse than an empty column
     /// — it's a wrong one. Matched, a day with nothing behind it just shows dashes in its
     /// own place.
+    ///
+    /// Today after its sunset is the one column that shows a night icon — see
+    /// `condition(for:isToday:at:)`.
     private static func dailyForecasts(from forecast: Forecast<DayWeather>) -> [DailyForecast] {
         let calendar = Calendar.current
-        let today = [DailyForecast].stripStart(containing: Date())
+        let now = Date()
+        let today = [DailyForecast].stripStart(containing: now)
 
         return (0..<7).map { offset in
             let date = calendar.date(byAdding: .day, value: offset, to: today) ?? today
@@ -175,7 +222,7 @@ final class WeatherService: WeatherProviding {
             // time zone, which needn't agree with the phone's about which day it is.
             return DailyForecast(
                 date: date,
-                condition: WeatherCondition(weatherKitCondition: day.condition),
+                condition: condition(for: day, isToday: offset == 0, at: now),
                 highTemp: fahrenheit(day.highTemperature),
                 lowTemp: fahrenheit(day.lowTemperature),
                 // WeatherKit gives 0.0–1.0; the strip shows a whole percent.
@@ -184,42 +231,83 @@ final class WeatherService: WeatherProviding {
         }
     }
 
-    /// Today's eight 3-hour blocks: 12AM, 3AM, 6AM, 9AM, 12PM, 3PM, 6PM, 9PM.
+    /// A day's icon on the strip.
     ///
-    /// Slot-first for the same reason as the days above. WeatherKit gives every hour of
-    /// the current day, including ones already past, so the blocks behind us usually do
-    /// have a reading to show; where the forecast doesn't reach back far enough, that one
-    /// block renders dashes and the other seven stay exactly where they were.
+    /// A day's condition describes its daytime weather, so it normally gets the daytime
+    /// icon. Today after sunset is the exception: the day is over as far as anyone
+    /// looking at the sky is concerned, so it shows tonight's forecast, moon and all —
+    /// the same rule the new service follows. A day with no sunset (the polar summer or
+    /// winter) stays on daytime.
+    private static func condition(for day: DayWeather, isToday: Bool, at now: Date) -> WeatherCondition {
+        if isToday, let sunset = day.sun.sunset, now >= sunset {
+            return WeatherCondition(weatherKitCondition: day.overnightForecast.condition, isDaylight: false)
+        }
+        return WeatherCondition(weatherKitCondition: day.condition, isDaylight: true)
+    }
+
+    /// Three hours back through the midnight that ends tomorrow — see
+    /// `HourlyForecast.stripStart`/`stripEnd`.
     ///
-    /// The block we're in right now shows `now` — the same live reading the dial points
-    /// at — rather than its forecast. A block's forecast is for the hour it starts at, so
-    /// by the end of its three hours it can be well out of date, and the "now" column
-    /// would disagree with the dial directly above it.
-    private static func hourlyBlocks(
+    /// Slot-first for the same reason as the days above. The request asks for exactly
+    /// these hours, the three already past included, so normally every one has a reading
+    /// to show; where the forecast doesn't reach, that one hour is left for
+    /// `HourlyCache` to fill, or renders dashes, and the rest stay exactly where they were.
+    ///
+    /// The hour we're in right now shows `now` — the same live reading the dial points
+    /// at — rather than its forecast. An hour's forecast is for the moment it starts, so
+    /// by the end of the hour it can be out of date, and the "now" column would disagree
+    /// with the dial directly above it.
+    private static func hourlyForecasts(
         from forecast: Forecast<HourWeather>,
         now: (condition: WeatherCondition, temperature: Int)
     ) -> [HourlyForecast] {
         let calendar = Calendar.current
         let fetchedAt = Date()
-        let start = [HourlyForecast].stripStart(containing: fetchedAt)
 
-        return (0..<8).map { index in
-            let date = calendar.date(byAdding: .hour, value: index * 3, to: start) ?? start
-            let block = HourlyForecast(date: date, condition: now.condition, temperature: now.temperature)
-            if block.contains(fetchedAt) {
-                return block
+        return [HourlyForecast].placeholder(from: fetchedAt).map { slot in
+            let hour = forecast.first(
+                where: { calendar.isDate($0.date, equalTo: slot.date, toGranularity: .hour) }
+            )
+            // WeatherKit gives 0–1; the app stores a whole percent, as for the days.
+            let precipChance = hour.map { Int(($0.precipitationChance * 100).rounded()) }
+
+            // The live reading has no chance of precipitation, so the current hour still
+            // takes that one from the forecast.
+            if slot.contains(fetchedAt) {
+                return HourlyForecast(
+                    date: slot.date,
+                    condition: now.condition,
+                    temperature: now.temperature,
+                    precipitationChance: precipChance
+                )
             }
-            guard let hour = forecast.first(
-                where: { calendar.isDate($0.date, equalTo: date, toGranularity: .hour) }
-            ) else {
-                return HourlyForecast(date: date, condition: nil, temperature: nil)
+            guard let hour else {
+                return slot
             }
             return HourlyForecast(
-                date: date,
-                condition: WeatherCondition(weatherKitCondition: hour.condition),
-                temperature: fahrenheit(hour.temperature)
+                date: slot.date,
+                condition: WeatherCondition(weatherKitCondition: hour.condition, isDaylight: hour.isDaylight),
+                temperature: fahrenheit(hour.temperature),
+                precipitationChance: precipChance
             )
         }
+    }
+
+    /// What fell in the last full hour — 11:00 to 12:00 when it's 12:25 — in inches.
+    ///
+    /// The nearest thing WeatherKit has to the new service's `precip1Hour`. CurrentWeather
+    /// only offers `precipitationIntensity`, a rate at this instant, which reads 0 the
+    /// moment a shower stops; the hourly forecast is asked for from three hours back, so
+    /// the hour just finished is in there with its total. Nil if it's missing anyway.
+    private static func precipitationLastHour(from forecast: Forecast<HourWeather>) -> Double? {
+        let calendar = Calendar.current
+        guard let thisHour = calendar.dateInterval(of: .hour, for: Date())?.start,
+              let lastHour = calendar.date(byAdding: .hour, value: -1, to: thisHour),
+              let hour = forecast.first(where: {
+                  calendar.isDate($0.date, equalTo: lastHour, toGranularity: .hour)
+              })
+        else { return nil }
+        return hour.precipitationAmount.converted(to: .inches).value
     }
 
     /// The app stores every temperature as a whole number of degrees Fahrenheit; this is
@@ -242,6 +330,8 @@ final class WeatherService: WeatherProviding {
 struct PreviewWeatherService: WeatherProviding {
     var condition: WeatherCondition = .clear
     var temperature: Int = 72
+    var humidity: Int? = 47
+    var precipitationLastHour: Double? = 0.02
     /// The made-up strips from `DailyForecast`/`HourlyForecast`. Only previews read these
     /// now — the running app's strips come from WeatherKit.
     var daily: [DailyForecast] = .sample
@@ -266,6 +356,9 @@ struct PreviewWeatherService: WeatherProviding {
         return WeatherSnapshot(
             condition: condition,
             temperature: temperature,
+            conditionLabel: condition.label,
+            humidity: humidity,
+            precipitationLastHour: precipitationLastHour,
             daily: daily,
             hourly: hourly,
             fetchedAt: fetchedAt
@@ -283,7 +376,10 @@ struct PreviewWeatherService: WeatherProviding {
 /// requests (URLSession) and `CLGeocoder` both do. A `CLLocationManager` fix does not —
 /// it answers when CoreLocation calls back — but CoreLocation applies its own timeout to
 /// that and always calls back eventually, so this can't wedge permanently.
-private func withTimeout<T: Sendable>(
+///
+/// Shared by both services rather than private to this file, so the new weather service
+/// gives up at the same moment WeatherKit would.
+func withTimeout<T: Sendable>(
     _ duration: Duration,
     operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {

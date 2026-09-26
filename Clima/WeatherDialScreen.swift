@@ -49,6 +49,20 @@ struct WeatherDialScreen: View {
     /// `isDarkMode`, which always had a value, so nobody starts out pinned to Light.
     @AppStorage("darkModeOverride") private var darkModeOverride: Bool?
 
+    /// Whether the app is on the new weather service rather than WeatherKit, flipped by a
+    /// triple-tap on the dial's current icon. Written here, read by `WeatherSourceSwitch`
+    /// on every fetch.
+    @AppStorage(WeatherSourceSwitch.usesNewServiceKey) private var usesNewWeatherService = false
+
+    /// When the switch to the new service happened, while its confetti is still falling;
+    /// nil the rest of the time.
+    @State private var confettiStart: Date?
+
+    /// The hour at the hourly strip's leading edge. Set to the strip's first hour —
+    /// three before now — whenever a reading lands; the reader's swiping moves it in
+    /// between.
+    @State private var hourlyScrollPosition: Date?
+
     /// The appearance actually on screen. With no override this is the phone's, since
     /// `.preferredColorScheme(nil)` below leaves the system's choice in place.
     @Environment(\.colorScheme) private var colorScheme
@@ -88,6 +102,12 @@ struct WeatherDialScreen: View {
             page
             SettingsDrawer(useCelsius: $useCelsius, isDarkMode: isDarkMode)
                 .padding(.bottom, SettingsDrawer.bottomMargin(scale: deviceScale))
+
+            // Last in the stack so it falls in front of everything, drawer included.
+            if let confettiStart {
+                ConfettiView(start: confettiStart)
+                    .ignoresSafeArea()
+            }
         }
         // On the stack, not on the drawer: a fixed-size child can't grow into the safe
         // area on its own, it can only be *positioned* in whatever box its parent gives
@@ -191,7 +211,11 @@ struct WeatherDialScreen: View {
                 // Passed through as an optional: with no reading the dial highlights
                 // nothing, rather than sitting lit on `.clear` and telling the reader it's
                 // sunny out while the readout underneath says there's no reading.
-                DialView(condition: snapshot?.condition, onRefresh: refresh)
+                DialView(
+                    condition: snapshot?.condition,
+                    onRefresh: refresh,
+                    onIconTripleTap: switchWeatherService
+                )
                     // The hub hangs below the dial's own layout frame; reserve that
                     // space so the reading below it isn't pushed into the hub.
                     .padding(.bottom, DialView.hubOverhang(scale: deviceScale))
@@ -212,11 +236,7 @@ struct WeatherDialScreen: View {
                         }
                     }
 
-                    strip {
-                        ForEach(snapshot?.hourly ?? .placeholder()) { hour in
-                            HourlyBlockColumn(hour: hour)
-                        }
-                    }
+                    hourlyStrip
                 }
             }
             .padding(.horizontal, Theme.gutter * deviceScale)
@@ -237,22 +257,50 @@ struct WeatherDialScreen: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text("Clima")
-                .climaCaps(size: 13, weight: .bold, tracking: 3.4)
+            // Tagged with the weather source in use: WK for WeatherKit, WC for the new
+            // service. `climaCaps` uppercases it, so this reads "CLIMA (WK)" on screen.
+            Text(usesNewWeatherService ? "Clima (WC)" : "Clima (WK)")
+                .climaCaps(.caption, bold: true)
                 .foregroundStyle(Theme.ink)
 
             Spacer()
 
-            Text(todayLabel)
-                .climaCaps(size: 11, weight: .medium)
-                .foregroundStyle(Theme.inkMuted)
+            // Shown whenever there IS a reading, not only when one has gone stale. A
+            // time that appears only on failure is itself a warning sign, and the reader
+            // has to learn what its absence means; a time that's always there is just a
+            // fact about the reading, and quietly answers "is this current?" without
+            // anyone having to ask.
+            //
+            // It has the header's right-hand end to itself — there's no date — and it's
+            // the same size as the app name beside it, so the header keeps the same
+            // height whether or not there's a reading yet.
+            if let updatedLabel {
+                Text(updatedLabel)
+                    .climaCaps(.caption)
+                    .foregroundStyle(Theme.inkMuted)
+            }
         }
     }
 
-    private var todayLabel: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEE d MMM"
-        return formatter.string(from: Date())
+    /// Swaps between WeatherKit and the new weather service, and fetches from the one
+    /// just chosen straight away so the reading on screen is its, not the other's.
+    ///
+    /// `load()` rather than `refresh()`, because `refresh()` declines while a fetch is
+    /// running — and a fetch from the old service still in flight is exactly the one that
+    /// should be overtaken. `load()`'s `fetchGeneration` check makes sure the old answer,
+    /// if it lands late, doesn't replace the new one.
+    private func switchWeatherService() {
+        usesNewWeatherService.toggle()
+        Task { await load() }
+
+        // The only sign the switch happened, so it plays for its full length and then
+        // takes itself off the screen.
+        let start = Date()
+        confettiStart = start
+        Task {
+            try? await Task.sleep(for: ConfettiView.duration)
+            if confettiStart == start { confettiStart = nil }
+        }
     }
 
     /// How far past the page's normal `Theme.gutter` margin the canopy is allowed to
@@ -285,26 +333,29 @@ struct WeatherDialScreen: View {
     /// being replaced by a warning light.
     private var readout: some View {
         VStack(spacing: 4 * deviceScale) {
-            Text(readoutValue)
-                .font(Theme.readoutFont(scale: deviceScale))
-                .foregroundStyle(Theme.readoutInk)
-                .contentTransition(.numericText())
+            // The smaller readings sit to the right of the temperature, the bottom one on
+            // its baseline. An invisible copy on the left balances them, so the number
+            // itself stays centred under the dial's pointer — without it, sharing a row
+            // would push the temperature left by half their width.
+            HStack(alignment: .lastTextBaseline, spacing: 8 * deviceScale) {
+                sideReadings
+                    .hidden()
+                    .accessibilityHidden(true)
 
-            Text(readoutCaption)
-                .climaCaps(size: 12, tracking: 2.6)
-                .foregroundStyle(Theme.readoutInk)
+                Text(readoutValue)
+                    .font(Theme.readoutFont(scale: deviceScale))
+                    .foregroundStyle(Theme.readoutInk)
+                    .contentTransition(.numericText())
 
-            // Shown whenever there IS a reading, not only when one has gone stale. A time
-            // that appears only on failure is itself a warning sign, and the reader has to
-            // learn what its absence means; a time that's always there is just a fact
-            // about the number above it, and quietly answers "is this current?" without
-            // anyone having to ask.
-            if let updatedLabel {
-                Text(updatedLabel)
-                    .climaCaps(size: 10, tracking: 1.6)
-                    .foregroundStyle(Theme.inkMuted)
-                    .padding(.top, 2 * deviceScale)
+                sideReadings
             }
+
+            // `inkMuted`, like "Updated" in the header. It once shared the big number's
+            // colour, which was a much paler grey then, and at this size that read as a
+            // light weight.
+            Text(readoutCaption)
+                .climaCaps(.caption)
+                .foregroundStyle(Theme.inkMuted)
 
             if case .failed(let message) = status {
                 // Sentence case, not the tracked-out caps above: these run to a line or
@@ -357,8 +408,51 @@ struct WeatherDialScreen: View {
             // A failed refresh still names the condition it managed to read last time;
             // the sentence underneath is what explains that it's no longer fresh. Only a
             // failure with nothing behind it has no condition to name.
-            return snapshot?.condition.label ?? "No reading"
+            return snapshot?.conditionLabel ?? "No reading"
         }
+    }
+
+    /// Precipitation in the last hour, above humidity — whichever of the two the
+    /// reading has. Empty with no reading, so the dash under the dial stays centred.
+    ///
+    /// Leading-aligned so the two icons line up in a column and the numbers start at the
+    /// same place.
+    @ViewBuilder
+    private var sideReadings: some View {
+        if let snapshot {
+            VStack(alignment: .leading, spacing: 4 * deviceScale) {
+                if let precipitation = snapshot.precipitationLastHour {
+                    sideReading(
+                        icon: "precipitation",
+                        value: precipitationText(precipitation, useMetric: useCelsius)
+                    )
+                    .accessibilityLabel(
+                        "Precipitation in the last hour, "
+                            + precipitationText(precipitation, useMetric: useCelsius)
+                                .replacingOccurrences(of: " in", with: " inches")
+                                .replacingOccurrences(of: " mm", with: " millimetres")
+                    )
+                }
+                if let humidity = snapshot.humidity {
+                    // The half-filled drop, deliberately not the precipitation one above
+                    // it, so the two readings can't be mistaken for each other.
+                    sideReading(icon: "humidity", value: "\(humidity)%")
+                        .accessibilityLabel("Humidity \(humidity) percent")
+                }
+            }
+        }
+    }
+
+    private func sideReading(icon: String, value: String) -> some View {
+        HStack(spacing: 2 * deviceScale) {
+            Image(icon)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 16 * deviceScale, height: 16 * deviceScale)
+            Text(value)
+                .font(Theme.valueFont(scale: deviceScale))
+        }
+        .foregroundStyle(Theme.inkMuted)
     }
 
     // MARK: - Forecast strips
@@ -369,29 +463,83 @@ struct WeatherDialScreen: View {
     /// longer differ in colour. The 7-day strip marks today the same way, on its first
     /// column.
     private func strip<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        let panelShape = RoundedRectangle(cornerRadius: baseStripCornerRadius * deviceScale, style: .continuous)
-        return HStack(spacing: 0) {
-            content()
+        stripPanel {
+            HStack(spacing: 0) {
+                content()
+            }
+            .padding(.horizontal, stripInset)
         }
-        // Far enough in that the "now" marker on the FIRST or LAST column still clears
-        // the panel's rounded corners. The marker's bar is flush with the top edge,
-        // which is exactly where the corner curve bites deepest — measured, it reaches
-        // about 18pt in from the panel's side on that first row. At the old 6pt inset
-        // the bar started 11pt in on the daily strip and only 8pt in on the hourly one
-        // (same panel width, 8 columns instead of 7), so the curve cut a notch off its
-        // end in both.
-        //
-        // 19 is the least that clears the tighter of the two, and it is close to the
-        // most this panel can give: the hourly columns come out about 41.5pt, against
-        // the 41pt `baseStripContentWidth` their icons are framed at, so there is only
-        // about half a point left in hand. If a future change needs more room here, the
-        // number to reconsider is the marker bar's own width rather than this inset.
-        .padding(.horizontal, 19 * deviceScale)
+    }
+
+    /// Three hours back through the midnight that ends tomorrow, as a row that swipes
+    /// sideways.
+    ///
+    /// Eight columns fit across the panel, the same width the columns had as eight
+    /// 3-hour blocks, and a sliver of the ninth shows at the edge to say there's more.
+    /// Swiping settles on whole columns, and the strip opens at its start, so the three
+    /// past hours are in view with "now" fourth — see `scrollHourlyToStart()`. Each
+    /// midnight after the first column is marked as the start of a new day.
+    private var hourlyStrip: some View {
+        stripPanel {
+            ScrollView(.horizontal) {
+                HStack(spacing: 0) {
+                    // Keyed by the hour, not `HourlyForecast.id`: every reading makes new
+                    // ids, and the scroll position has to survive from one to the next.
+                    let hours = snapshot?.hourly ?? .placeholder()
+                    ForEach(hours, id: \.date) { hour in
+                        // The first column is never marked, even at midnight: with
+                        // nothing before it, there's no day it follows.
+                        HourlyColumn(hour: hour, startsNewDay: hour.isMidnight && hour.date != hours.first?.date)
+                            .containerRelativeFrame(.horizontal, count: 8, spacing: 0)
+                    }
+                }
+                .scrollTargetLayout()
+            }
+            // Margins rather than padding, so a column swiped past them still shows right
+            // out to the panel's edge, while a column at rest sits `stripInset` in, clear
+            // of the corners the same as the 7-day strip's.
+            .contentMargins(.horizontal, stripInset, for: .scrollContent)
+            .scrollTargetBehavior(.viewAligned)
+            .scrollIndicators(.hidden)
+            .scrollPosition(id: $hourlyScrollPosition, anchor: .leading)
+        }
+        .onAppear(perform: scrollHourlyToStart)
+        .onChange(of: snapshot?.fetchedAt) { scrollHourlyToStart() }
+    }
+
+    /// Brings the strip back to its first column — three hours before now, which puts
+    /// "now" fourth — when the screen appears and whenever a new reading lands, so a
+    /// refresh also puts "now" back where it's expected.
+    private func scrollHourlyToStart() {
+        let hours = snapshot?.hourly ?? .placeholder()
+        hourlyScrollPosition = hours.first?.date
+    }
+
+    /// How far in from the panel's sides the columns sit: far enough that the "now"
+    /// marker on the FIRST or LAST column still clears the panel's rounded corners. The
+    /// marker's bar is flush with the top edge, which is exactly where the corner curve
+    /// bites deepest — measured, it reaches about 18pt in from the panel's side on that
+    /// first row. At the old 6pt inset the bar started 11pt in on the daily strip and
+    /// only 8pt in on the hourly one (same panel width, 8 columns instead of 7), so the
+    /// curve cut a notch off its end in both.
+    ///
+    /// 19 is the least that clears the tighter of the two, and it is close to the most
+    /// this panel can give: the hourly columns come out about 41.5pt, against the 41pt
+    /// `baseStripContentWidth` their icons are framed at, so there is only about half a
+    /// point left in hand. If a future change needs more room here, the number to
+    /// reconsider is the marker bar's own width rather than this inset.
+    private var stripInset: CGFloat { 19 * deviceScale }
+
+    /// The panel both strips sit on: its surface, moulded edge and rounded corners, and
+    /// its bleed out to the canopy's width. The content brings its own side inset.
+    private func stripPanel<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        let panelShape = RoundedRectangle(cornerRadius: baseStripCornerRadius * deviceScale, style: .continuous)
+        return content()
         .padding(.bottom, 14 * deviceScale)
         // The panel surface and its edge shading together, BEHIND the columns rather
         // than the shading lying over them. The "now" marker is flush with the panel's
         // top edge, right where that shading is heaviest, so over the top it came out
-        // markedly darker than `Theme.stripIndicator` and no longer matched the dial
+        // markedly darker than `Theme.indexMark` and no longer matched the dial
         // pointer it echoes. Nothing else in the panel reaches near enough to an edge
         // for the move to touch it — the day letters clear the top shading by roughly
         // twice its reach — so the panel's moulded edge looks exactly as it did.
@@ -451,7 +599,7 @@ private struct ForecastDayColumn: View {
         // and the two rows read as one instrument when both carry it.
         StripColumn(isActive: isToday) {
             Text(day.dayLetter)
-                .climaCaps(size: 15, tracking: 0.6)
+                .climaCaps(.heading)
                 .foregroundStyle(Theme.panelInk)
 
             // No condition, no icon — a guessed one would be as misleading as a guessed
@@ -469,29 +617,47 @@ private struct ForecastDayColumn: View {
             }
             .frame(width: baseStripContentWidth * deviceScale, height: baseStripContentWidth * deviceScale)
 
+            // Regular even for today: the marker above the column already says which day
+            // is today, and a bold high read as heavier than the rest of the row.
             Text(temperatureText(day.highTemp, useCelsius: useCelsius))
-                .font(isToday ? Theme.valueStrongFont(scale: deviceScale) : Theme.valueFont(scale: deviceScale))
+                .font(Theme.valueFont(scale: deviceScale))
                 .foregroundStyle(Theme.panelInk)
 
             Text(temperatureText(day.lowTemp, useCelsius: useCelsius))
                 .font(Theme.valueFont(scale: deviceScale))
                 .foregroundStyle(Theme.panelInkMuted)
 
-            HStack(spacing: 2 * deviceScale) {
-                Image(systemName: "drop.fill")
-                    .font(.system(size: 9 * deviceScale))
-                    .foregroundStyle(Theme.panelIcon)
-                Text(day.precipitationChance.map { "\($0)%" } ?? "—")
-                    .font(Theme.valueFont(scale: deviceScale))
-                    .foregroundStyle(Theme.panelInkMuted)
-            }
+            // Only a likely chance is shown: seven small percentages, most of them near
+            // zero, read as noise. The condition icon above already says what's coming,
+            // so the number needs no drop icon beside it.
+            Text(precipitationChanceText(day.precipitationChance))
+                .font(Theme.valueFont(scale: deviceScale))
+                .foregroundStyle(Theme.panelInkMuted)
         }
     }
 }
 
-/// One column in the hourly strip: the 3-hour block's time, condition icon, temperature.
-private struct HourlyBlockColumn: View {
+/// Chances at or below this show as a dash rather than a number, on both strips.
+private let precipitationThreshold = 40
+
+/// The chance as "75%" when it's above the threshold, and "—" otherwise — whether it's
+/// too low to bother with or there's no reading yet.
+private func precipitationChanceText(_ chance: Int?) -> String {
+    guard let chance, chance > precipitationThreshold else {
+        return "—"
+    }
+    return "\(chance)%"
+}
+
+/// One column in the hourly strip: the hour, condition icon, temperature, and the
+/// chance of precipitation.
+private struct HourlyColumn: View {
     let hour: HourlyForecast
+    /// Whether this column is the first hour of a new day — tomorrow's midnight, or
+    /// today's when the strip reaches back into yesterday. Its label is the day's name in
+    /// bold, "SAT", in place of "12AM", and a hairline runs down its leading edge, so the
+    /// change of day reads at a glance and says which day it is.
+    let startsNewDay: Bool
 
     @AppStorage("useCelsius") private var useCelsius = false
     @Environment(\.deviceScale) private var deviceScale
@@ -502,12 +668,14 @@ private struct HourlyBlockColumn: View {
 
     var body: some View {
         StripColumn(isActive: isNow) {
-            Text(hour.timeLabel)
-                .climaCaps(size: 14, tracking: 0.4)
+            // `climaCaps` uppercases it, so "Sat" reads "SAT". The hours either side say
+            // it's midnight, so "12AM" isn't missed.
+            Text(startsNewDay ? hour.date.formatted(.dateTime.weekday(.abbreviated)) : hour.timeLabel)
+                .climaCaps(.heading, bold: startsNewDay)
                 .foregroundStyle(Theme.panelInk)
 
             // Same as the 7-day column: no condition means no icon, but the frame stays
-            // so the eight blocks keep their rows aligned.
+            // so the hours keep their rows aligned.
             Group {
                 if let condition = hour.condition {
                     Image(condition.iconName)
@@ -520,9 +688,27 @@ private struct HourlyBlockColumn: View {
             }
             .frame(width: baseStripContentWidth * deviceScale, height: baseStripContentWidth * deviceScale)
 
+            // Regular even for the current hour: the marker above the column says which
+            // one is now, and the bold reading for now is the big one under the dial.
             Text(temperatureText(hour.temperature, useCelsius: useCelsius))
-                .font(isNow ? Theme.valueStrongFont(scale: deviceScale) : Theme.valueFont(scale: deviceScale))
+                .font(Theme.valueFont(scale: deviceScale))
                 .foregroundStyle(Theme.panelInk)
+
+            // Same rule as the 7-day column: only a likely chance gets a number.
+            Text(precipitationChanceText(hour.precipitationChance))
+                .font(Theme.valueFont(scale: deviceScale))
+                .foregroundStyle(Theme.panelInkMuted)
+        }
+        // An overlay, so it takes no width: the columns stay the same size either side
+        // of it. It starts just above the label, below the "now" marker's slot, so it
+        // never runs through the marker.
+        .overlay(alignment: .leading) {
+            if startsNewDay {
+                Rectangle()
+                    .fill(Theme.panelInkMuted)
+                    .frame(width: 1 * deviceScale)
+                    .padding(.top, 18 * deviceScale)
+            }
         }
     }
 }
@@ -530,6 +716,7 @@ private struct HourlyBlockColumn: View {
 /// The shared shell for both strips: an equal-width column topped by the "now" marker,
 /// which is always laid out but only visible on the active column, so every column in a
 /// row keeps its contents on the same baselines.
+
 private struct StripColumn<Content: View>: View {
     let isActive: Bool
     @ViewBuilder let content: Content
@@ -542,11 +729,11 @@ private struct StripColumn<Content: View>: View {
             // down: one shape, one colour, one meaning throughout the app.
             VStack(spacing: 0) {
                 Rectangle()
-                    .fill(Theme.stripIndicator)
+                    .fill(Theme.indexMark)
                     .frame(width: baseStripContentWidth * deviceScale, height: 4 * deviceScale)
 
                 Triangle()
-                    .fill(Theme.stripIndicator)
+                    .fill(Theme.indexMark)
                     .frame(width: 16 * deviceScale, height: 7 * deviceScale)
             }
             .opacity(isActive ? 1 : 0)
@@ -686,7 +873,7 @@ private struct SettingsDrawer: View {
 
     private var switches: some View {
         HStack {
-            SlideToggle(leading: "°F", trailing: "°C", tracking: 0, isTrailing: $useCelsius)
+            SlideToggle(leading: "°F", trailing: "°C", tracked: false, isTrailing: $useCelsius)
             Spacer()
             SlideToggle(leading: "Light", trailing: "Dark", isTrailing: $isDarkMode)
         }
@@ -755,7 +942,7 @@ private struct SlideToggle: View {
     let trailing: String
     /// Word labels want the tracked-out treatment the rest of the app uses; a unit like
     /// "°F" does not — spacing it out reads as "° F".
-    var tracking: CGFloat = 1.2
+    var tracked = true
     @Binding var isTrailing: Bool
 
     @Environment(\.deviceScale) private var deviceScale
@@ -796,7 +983,7 @@ private struct SlideToggle: View {
 
     private func label(_ title: String, isSelected: Bool, select: @escaping () -> Void) -> some View {
         Text(title)
-            .climaCaps(size: 10, tracking: tracking)
+            .climaCaps(.small, tracked: tracked)
             .foregroundStyle(isSelected ? Theme.ink : Theme.inkMuted)
             .contentShape(Rectangle())
             .onTapGesture { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { select() } }

@@ -13,8 +13,12 @@ import UIKit
 /// the pointer — it always means "this is the reading you want"), hairline rules rather
 /// than drop shadows, and small tracked-out uppercase labels.
 ///
-/// Light mode is the tuned one. The dark values below keep the app readable if the
-/// Appearance switch is flipped, but they haven't had the same attention yet.
+/// Every grey — surfaces and text, in both modes — leans the same warm way (a touch
+/// more red than blue), so nothing on screen reads as a cool slate against warm paper.
+/// Text comes in three steps, each clearing 4.5:1 against the surface it sits on:
+/// `ink` (near-black), `panelInk` (the strips' headline readings) and `inkMuted`
+/// (everything quieter). Dark mode keeps the same three steps and the same spacing
+/// between them.
 enum Theme {
 
     // MARK: - Responsive scale
@@ -30,25 +34,25 @@ enum Theme {
     // MARK: - Palette
 
     /// The page itself.
-    static let canvas = dynamic(light: 0xe8e9de, dark: 0x17171A)
+    static let canvas = dynamic(light: 0xe8e9de, dark: 0x1A1917)
     /// The dial's canopy. Lighter than the page, so the instrument reads as the one lit
     /// surface on screen.
-    static let dialFace = dynamic(light: 0xf1f0e6, dark: 0x2A2A2E)
-    /// The condition the pointer is sitting on.
-    static let dialIconSelected = dynamic(light: 0x61616f, dark: 0xF0F0E6)
+    static let dialFace = dynamic(light: 0xf1f0e6, dark: 0x2C2B28)
+    /// The condition the pointer is sitting on. 5.9:1 against `dialFace` in light mode.
+    static let dialIconSelected = dynamic(light: 0x5d5b55, dark: 0xF2F1ED)
     /// Its two neighbours — present, but clearly not the reading.
-    static let dialIconInactive = dynamic(light: 0xe3e2da, dark: 0x4A4A50)
+    static let dialIconInactive = dynamic(light: 0xe3e2da, dark: 0x4B4944)
     // The refresh button has no colours here: it's drawn from artwork in the asset
     // catalog (`refreshButton`, `refreshButtonPressed`), which carries its own.
 
     /// The panel behind the 7-day and hourly strips — and behind the settings drawer
     /// once it's open, so what the cover slides away from matches the strips above it.
-    static let panel = dynamic(light: 0xd3d3ca, dark: 0x232327)
+    static let panel = dynamic(light: 0xd3d3ca, dark: 0x252421)
     /// The groove a slide-toggle's knob runs in. A step darker than `panel`, because
     /// the open drawer *is* a panel: when the track shared `panel`'s exact tone, shading
     /// alone was doing all the work, and it read as a slightly smudged patch of the
     /// surface rather than as a channel cut into it.
-    static let toggleTrack = dynamic(light: 0xa8a7a2, dark: 0x141416)
+    static let toggleTrack = dynamic(light: 0xa8a7a2, dark: 0x161513)
     /// A slide-toggle knob's lit top face and its shaded underside — a warm-neutral pair
     /// in the same family as the rest of the palette. Filling the knob with the gradient
     /// between the two, rather than one flat near-white, is what makes it read as a
@@ -57,22 +61,29 @@ enum Theme {
     static let toggleKnob = dynamic(light: 0xFAF9F4, dark: 0x4A4A46)
     static let toggleKnobShade = dynamic(light: 0xDFDED3, dark: 0x323230)
     /// Readings on a panel that carry the information: day letters, hours, highs.
-    static let panelInk = dynamic(light: 0xffffff, dark: 0xF2F1ED)
-    /// The quieter half of a panel: overnight lows and condition icons — the same
-    /// darkened shade for both now, rather than two slightly different greys.
-    static let panelInkMuted = dynamic(light: 0x8f8f87, dark: 0x6E6D6A)
-    static let panelIcon = dynamic(light: 0x82828f, dark: 0x5E5D5A)
+    /// 7.1:1 against `panel` (11.4:1 in dark) — a clear step above `inkMuted`'s 4.5:1,
+    /// so highs visibly outrank the lows beneath them while both stay easy to read.
+    static let panelInk = dynamic(light: 0x403e3a, dark: 0xE0DDD6)
+    /// The quieter half of a panel — overnight lows, rain chances — and its condition
+    /// icons. The same grey as the page's own quieter text, so there's one "second
+    /// read" shade in the app rather than one per surface.
+    static let panelInkMuted = inkMuted
+    /// Kept as its own name so the icons' role stays visible at the call sites.
+    static let panelIcon = inkMuted
 
-    /// The main temperature reading and the condition name underneath it — a single
-    /// softer shade shared by both, rather than the sharper near-black `ink` used for
-    /// page text like the header. One hex given, so (like the pointer/strip reds) it
-    /// stays the same in dark mode rather than getting its own tuned dark value.
-    static let readoutInk = dynamic(light: 0xb2b3b1, dark: 0x686669)
+    /// The main temperature reading. The same grey as the dial icon the pointer is
+    /// sitting on, so the lit condition and the number under it read as one reading.
+    /// 5.5:1 against `canvas`; the pale grey it used before (0xb2b3b1) managed only
+    /// 1.7:1, which made the most important number on the page its faintest text.
+    static let readoutInk = dialIconSelected
 
     /// Text on the page itself.
     static let ink = dynamic(light: 0x1A1A19, dark: 0xF2F1ED)
-    /// Labels, and anything the eye should reach second.
-    static let inkMuted = dynamic(light: 0x76736C, dark: 0x94918A)
+    /// Labels, and anything the eye should reach second: the condition caption,
+    /// "Updated", the side readings, error messages, unselected switch labels, and the
+    /// strips' lows and icons. 5.5:1 against `canvas` and 4.5:1 against `panel` in light
+    /// mode; 6.3:1 and 5.5:1 in dark.
+    static let inkMuted = dynamic(light: 0x5d5b55, dark: 0x9E9A91)
     /// Outlines — structure that should be felt, not read.
     static let hairline = dynamic(light: 0xCBCCC1, dark: 0x3C3C39)
     /// The canopy's own outer trace — a touch darker than the shared `hairline` so the
@@ -82,77 +93,92 @@ enum Theme {
     /// Drawn in light mode only — dark alpha 0. On the dark page the canopy is already
     /// the lighter of the two surfaces, so its edge reads on tone alone; a pale line on
     /// top of that only made the dome look cut out and pasted onto the page.
-    static let canopyOutline = dynamic(light: 0x919192, dark: 0x919192, darkAlpha: 0)
-    /// The dial pointer's triangle tip. Red on the light page; in dark mode the pointer
-    /// stops being a printed index mark and becomes the one lit thing on screen — the
-    /// lamp casting `pointerBeam` — so it takes a warm sodium-yellow instead.
+    static let canopyOutline = dynamic(light: 0x92908B, dark: 0x92908B, darkAlpha: 0)
+    /// The app's one index mark — "this is the reading you want". Used for every part of
+    /// it wherever it turns up: the dial pointer's triangle tip and hairline shaft, and
+    /// the "now" / "today" markers on the forecast strips. One swatch rather than one per
+    /// part, so the mark can't drift into several near-identical shades again.
     ///
-    /// That yellow is shared, verbatim, with the two swatches below it: in dark mode
-    /// every index mark in the app — tip, shaft and the hourly strip's "now" marker — is
-    /// one single value. The three stay separate constants only because light mode still
-    /// draws its own distinctions between them.
-    static let pointerTriangle = dynamic(light: 0xe35656, dark: 0xc7b348)
-    /// The dial pointer's hairline shaft. On the light page it's a step duller than the
-    /// triangle, so the tip still reads as the sharper, more precise end of the two. In
-    /// dark mode that distinction is dropped: the beam does the work of separating tip
-    /// from shaft there, brightest at the lamp and gone by the time the shaft picks up
-    /// again below the icon.
-    static let pointerLine = dynamic(light: 0xe35656, dark: 0xdbc650)
+    /// Red on the light page. In dark mode the pointer stops being a printed mark and
+    /// becomes the one lit thing on screen — the lamp casting `pointerBeam` — so it takes
+    /// a warm sodium-yellow instead.
+    static let indexMark = dynamic(light: 0xe35656, dark: 0xc7b348)
     /// The cone of light the pointer throws down the canopy in dark mode. A shade PALER
-    /// than the lamp itself rather than the same value — light scatters toward white as
-    /// it spreads, and the paler tone is what keeps the beam reading as light instead of
-    /// as a wash of colour laid over the canopy.
+    /// than the lamp itself (`indexMark`) rather than the same value — light scatters
+    /// toward white as it spreads, and the paler tone is what keeps the beam reading as
+    /// light instead of as a wash of colour laid over the canopy.
     ///
     /// Fully transparent in light mode — light alpha 0 — since a beam only reads against
     /// a dark surface, and in daylight the pointer is just a mark printed on the dial.
     static let pointerBeam = dynamic(light: 0xC6C76A, dark: 0xC6C76A, lightAlpha: 0)
-    /// The "now" marker on the hourly panel. It follows the dial pointer into dark mode
-    /// — the same value, not merely a near one — so the app's one index mark keeps
-    /// meaning the same thing, and looking the same, wherever it turns up.
-    ///
-    /// This swatch reads at face value now. The marker sits at the very top of its
-    /// panel, right where that panel's `InnerShadow` is heaviest, and for as long as the
-    /// shading was laid over the columns the mark eyedroppered around 28% darker than
-    /// the value here — true of every colour this swatch has held, the original red
-    /// included. `strip` now draws that shading behind the columns instead, which leaves
-    /// the panel's edge untouched and lets the marker match the dial pointer. The value
-    /// below is the one that was tuned under the old, darkening arrangement, so it will
-    /// read brighter than before until it's retuned.
-    static let stripIndicator = dynamic(light: 0xe86f6f, dark: 0xc7b451)
 
     // MARK: - Type
 
-    /// Bariol ships only two weights (Light and Regular — no medium, semibold, bold or
-    /// thin file exists), so every text style in the app maps onto one of those two,
-    /// with SwiftUI's synthetic `.bold()` as the one extra step above Regular for the
-    /// few spots that need to stand out further. Registered via the two .otf files in
-    /// Fonts/ and the `UIAppFonts` build setting — no manual Xcode step needed, since
-    /// the Clima folder is a synchronized group that picks up new files on its own.
-    fileprivate static let lightFontName = "Bariol-Light"
+    /// Bariol comes in three weights here — Light, Regular and Bold; there's no medium,
+    /// semibold or thin. The app uses two of them: Regular for nearly everything, Bold
+    /// for the few spots that need to stand out. Light is still bundled but nothing
+    /// uses it. Registered via the .otf files in Fonts/ and the `UIAppFonts` list in
+    /// Clima-Info-Fonts.plist; a new font file needs adding to that list by hand.
+    ///
+    /// Bold is its own face rather than `.bold()` on Regular: SwiftUI doesn't synthesize
+    /// a bold for a custom font, so `.bold()` came out exactly as Regular.
     fileprivate static let regularFontName = "Bariol-Regular"
+    fileprivate static let boldFontName = "Bariol-Bold"
 
-    /// The big temperature. Bariol's one light weight stands in for the system font's
-    /// `.thin`. `.monospacedDigit()` is left in place for when the reading changes, but
-    /// Bariol has no monospaced-digit feature to actually honour it — each digit keeps
-    /// its own natural width, so the number may shift slightly rather than holding
-    /// perfectly still the way the system font did.
+    /// The big temperature, in Regular — its size is emphasis enough.
+    /// `.monospacedDigit()` is left in place for when the reading changes, but Bariol
+    /// has no monospaced-digit feature to actually honour it — each digit keeps its own
+    /// natural width, so the number may shift slightly rather than holding perfectly
+    /// still the way the system font did.
     ///
     /// A `Font` value can't be resized after the fact the way a plain number can, so
-    /// unlike most of this file's measurements, the three text styles below have to be
+    /// unlike most of this file's measurements, the two text styles below have to be
     /// functions that take the scale directly rather than pre-built constants.
     static func readoutFont(scale: CGFloat) -> Font {
-        Font.custom(lightFontName, size: 62 * scale).monospacedDigit()
+        Font.custom(regularFontName, size: readoutSize * scale).monospacedDigit()
     }
     /// A reading in the forecast strips.
     static func valueFont(scale: CGFloat) -> Font {
-        Font.custom(regularFontName, size: 15 * scale).monospacedDigit()
+        Font.custom(regularFontName, size: valueSize * scale).monospacedDigit()
     }
-    /// A reading that should carry more weight — a daily high, the current hour.
-    /// Synthetic bold on top of Regular, since there's no true medium/semibold face to
-    /// reach for — without it, this would render identically to `valueFont` and the
-    /// "today"/"now" emphasis those two fonts exist to carry would disappear entirely.
-    static func valueStrongFont(scale: CGFloat) -> Font {
-        Font.custom(regularFontName, size: 15 * scale).bold().monospacedDigit()
+
+    /// The app's whole type scale: four sizes, at `deviceScale` 1. Nothing on screen
+    /// sets a size of its own — it's one of these, so neighbouring text is either the
+    /// same size or clearly different, never a point or two apart.
+    static let readoutSize: CGFloat = 62
+    static let valueSize: CGFloat = 15
+    static let captionSize: CGFloat = 13
+    static let smallSize: CGFloat = 10
+
+    /// The three kinds of uppercase label, each with its size and letter-spacing fixed
+    /// together. Spacing is tighter as the size goes up: small caps need air between
+    /// the letters to stay legible, while at 15pt the same air would push the hourly
+    /// labels out of their columns.
+    enum CapsStyle {
+        /// Strip column headings — day letters and hours. The same size as the readings
+        /// beneath them, so each column reads as one stack.
+        case heading
+        /// The header — app name and "Updated 14:32" — and the condition name under the
+        /// temperature.
+        case caption
+        /// Small print: the settings switches' labels.
+        case small
+
+        var size: CGFloat {
+            switch self {
+            case .heading: Theme.valueSize
+            case .caption: Theme.captionSize
+            case .small: Theme.smallSize
+            }
+        }
+
+        var tracking: CGFloat {
+            switch self {
+            case .heading: 0.6
+            case .caption: 2.6
+            case .small: 1.2
+            }
+        }
     }
 
     // MARK: - Measurements
@@ -196,19 +222,15 @@ extension EnvironmentValues {
 
 private struct ClimaCapsModifier: ViewModifier {
     @Environment(\.deviceScale) private var scale
-    let size: CGFloat
-    let weight: Font.Weight
-    let tracking: CGFloat
+    let style: Theme.CapsStyle
+    let bold: Bool
+    let tracked: Bool
 
     func body(content: Content) -> some View {
-        // Every caller passes .bold, .medium, or the .semibold default — never
-        // .light/.thin — so the only real branch Bariol's two weights need to make
-        // here is "the one spot that asked for .bold" versus "everything else".
-        let base = Font.custom(Theme.regularFontName, size: size * scale)
-        return content
-            .font(weight == .bold ? base.bold() : base)
+        content
+            .font(.custom(bold ? Theme.boldFontName : Theme.regularFontName, size: style.size * scale))
             .textCase(.uppercase)
-            .tracking(tracking * scale)
+            .tracking(tracked ? style.tracking * scale : 0)
     }
 }
 
@@ -220,8 +242,16 @@ extension View {
     /// Reads `deviceScale` itself (via the modifier above) rather than taking it as a
     /// parameter, so every one of this helper's many call sites across the app stayed
     /// untouched when scaling was added — only the definition needed to change.
-    func climaCaps(size: CGFloat = 11, weight: Font.Weight = .semibold, tracking: CGFloat = 1.6) -> some View {
-        modifier(ClimaCapsModifier(size: size, weight: weight, tracking: tracking))
+    ///
+    /// Size and letter-spacing come from `style` rather than being passed separately, so
+    /// every label of a kind matches. `tracked: false` is for unit symbols like "°F",
+    /// which spaced out read as "° F".
+    ///
+    /// Weight is a plain on/off rather than a `Font.Weight`, because Bariol only gives
+    /// labels two to choose from — Regular, or Bold for the few that must stand out.
+    /// Anything in between (medium, semibold) would silently draw as Regular.
+    func climaCaps(_ style: Theme.CapsStyle, bold: Bool = false, tracked: Bool = true) -> some View {
+        modifier(ClimaCapsModifier(style: style, bold: bold, tracked: tracked))
     }
 }
 
@@ -333,6 +363,24 @@ func temperatureText(_ fahrenheit: Int?, useCelsius: Bool) -> String {
     guard useCelsius else { return "\(fahrenheit)°" }
     let celsius = Int((Double(fahrenheit - 32) * 5 / 9).rounded())
     return "\(celsius)°"
+}
+
+/// Formats an amount of precipitation in inches, or in millimetres when `useMetric` is
+/// on — "0.02 in", "0.5 mm".
+///
+/// Unlike temperatures, the unit is written out: "0.02" on its own could be anything.
+/// The screen passes the °F/°C switch as `useMetric`, so someone reading Celsius also
+/// reads millimetres rather than a mix of the two systems. Inches get two decimals
+/// because a light shower is a few hundredths; millimetres, 25 times smaller, need one.
+///
+/// `nil` formats as a bare dash, for the same reason as `temperatureText`.
+func precipitationText(_ inches: Double?, useMetric: Bool) -> String {
+    guard let inches else { return "—" }
+    guard useMetric else {
+        return "\(inches.formatted(.number.precision(.fractionLength(2)))) in"
+    }
+    let millimetres = inches * 25.4
+    return "\(millimetres.formatted(.number.precision(.fractionLength(1)))) mm"
 }
 
 // MARK: - Private
