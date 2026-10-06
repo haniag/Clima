@@ -2,4 +2,19 @@
 xcuserdata/
 DerivedData/
 build/
+
+# API key — see README for how to create it
 Clima/Secrets.swift
+
+# Personal Claude Code settings (local paths and permissions)
+.claude/settings.local.json
+
+# Reference material that isn't ours to publish
+misc/
+
+# Sample API requests/responses kept for reference (contain location data)
+*_response.txt
+*_request_params.txt
+
+# Stray image in the project root
+/-frontend
