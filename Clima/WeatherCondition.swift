@@ -112,8 +112,8 @@ extension WeatherCondition {
 
 extension WeatherCondition {
     /// Buckets the new weather service's `iconCode` (0–47) into our dial positions — the
-    /// same job `init(weatherKitCondition:isDaylight:)` does for WeatherKit, for the
-    /// service the dial's triple-tap switches to.
+    /// same job `init(weatherKitCondition:isDaylight:)` does for WeatherKit, for
+    /// the new weather service.
     ///
     /// The codes marked "agreed" are the ones we were given a mapping for. The rest are
     /// the other codes that service can send, bucketed by what they mean, the same way the

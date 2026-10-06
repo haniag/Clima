@@ -39,12 +39,16 @@ struct WeatherSnapshot {
     let precipitationLastHour: Double?
     /// Today and the six days after it, for the upper strip.
     let daily: [DailyForecast]
-    /// Every hour from three hours ago through the midnight that ends tomorrow, one each,
+    /// Every hour from the current one through the midnight that ends tomorrow, one each,
     /// for the lower strip — see `HourlyForecast.stripStart`/`stripEnd`.
     ///
     /// A `var`, unlike the rest, so `WeatherSourceSwitch` can fill its gaps from
     /// `HourlyCache` after the service has answered.
     var hourly: [HourlyForecast]
+
+    /// What the place the reading is for is called — "Centreville" — or nil when the
+    /// lookup isn't set up or didn't answer. See `LocationNameService`.
+    let locationName: String?
 
     /// When this reading was taken.
     ///
@@ -153,23 +157,29 @@ final class WeatherService: WeatherProviding {
     private func fetchSnapshot() async throws -> WeatherSnapshot {
         let location = try await locationProvider.currentLocation()
 
+        // Started first so it runs while WeatherKit is answering, rather than after.
+        async let locationName = LocationNameService.name(for: location)
+
         // All three datasets in ONE call. WeatherKit's variadic overload fetches them
         // together, so the dial and both strips are guaranteed to describe the same
         // moment — three separate calls could straddle a condition change and leave the
         // dial disagreeing with the strip directly under it.
         //
-        // The hours are asked for by date, to cover exactly the strip: WeatherKit's
-        // default hourly range starts at the current hour and runs out partway through
-        // tomorrow. The end is an hour past the strip's last column, so that column's
-        // hour is inside the range.
+        // The hours are asked for by date: WeatherKit's default hourly range runs out
+        // partway through tomorrow. The end is an hour past the strip's last column, so
+        // that column's hour is inside the range. The start is an hour before the strip's
+        // first column — the hour just finished isn't on the strip, but it's where
+        // `precipitationLastHour` reads from.
         let now = Date()
-        let hoursEnd = Calendar.current.date(
-            byAdding: .hour, value: 1, to: [HourlyForecast].stripEnd(containing: now)
-        ) ?? [HourlyForecast].stripEnd(containing: now)
+        let calendar = Calendar.current
+        let stripStart = [HourlyForecast].stripStart(containing: now)
+        let stripEnd = [HourlyForecast].stripEnd(containing: now)
+        let hoursStart = calendar.date(byAdding: .hour, value: -1, to: stripStart) ?? stripStart
+        let hoursEnd = calendar.date(byAdding: .hour, value: 1, to: stripEnd) ?? stripEnd
         let (current, daily, hourly) = try await weatherKit.weather(
             for: location,
             including: .current, .daily,
-            .hourly(startDate: [HourlyForecast].stripStart(containing: now), endDate: hoursEnd)
+            .hourly(startDate: hoursStart, endDate: hoursEnd)
         )
 
         let condition = WeatherCondition(weatherKitCondition: current.condition, isDaylight: current.isDaylight)
@@ -184,6 +194,7 @@ final class WeatherService: WeatherProviding {
             precipitationLastHour: Self.precipitationLastHour(from: hourly),
             daily: Self.dailyForecasts(from: daily),
             hourly: Self.hourlyForecasts(from: hourly, now: (condition, temperature)),
+            locationName: await locationName,
             // Stamped when the answer lands, not when the request left, so the time on
             // screen is the age of the data rather than the age of the attempt.
             fetchedAt: Date()
@@ -245,12 +256,12 @@ final class WeatherService: WeatherProviding {
         return WeatherCondition(weatherKitCondition: day.condition, isDaylight: true)
     }
 
-    /// Three hours back through the midnight that ends tomorrow — see
+    /// The current hour through the midnight that ends tomorrow — see
     /// `HourlyForecast.stripStart`/`stripEnd`.
     ///
-    /// Slot-first for the same reason as the days above. The request asks for exactly
-    /// these hours, the three already past included, so normally every one has a reading
-    /// to show; where the forecast doesn't reach, that one hour is left for
+    /// Slot-first for the same reason as the days above. The request covers all of these
+    /// hours, so normally every one has a reading to show; where the forecast doesn't
+    /// reach, that one hour is left for
     /// `HourlyCache` to fill, or renders dashes, and the rest stay exactly where they were.
     ///
     /// The hour we're in right now shows `now` — the same live reading the dial points
@@ -297,8 +308,9 @@ final class WeatherService: WeatherProviding {
     ///
     /// The nearest thing WeatherKit has to the new service's `precip1Hour`. CurrentWeather
     /// only offers `precipitationIntensity`, a rate at this instant, which reads 0 the
-    /// moment a shower stops; the hourly forecast is asked for from three hours back, so
-    /// the hour just finished is in there with its total. Nil if it's missing anyway.
+    /// moment a shower stops; the hourly forecast is asked for from an hour before the
+    /// strip starts, so the hour just finished is in there with its total. Nil if it's
+    /// missing anyway.
     private static func precipitationLastHour(from forecast: Forecast<HourWeather>) -> Double? {
         let calendar = Calendar.current
         guard let thisHour = calendar.dateInterval(of: .hour, for: Date())?.start,
@@ -336,6 +348,7 @@ struct PreviewWeatherService: WeatherProviding {
     /// now — the running app's strips come from WeatherKit.
     var daily: [DailyForecast] = .sample
     var hourly: [HourlyForecast] = .sample
+    var locationName: String? = "Centreville"
     /// Set this to make every fetch fail instead of answering.
     var error: Error?
     /// How long to stall before answering, for a look at the loading state. Not subject to
@@ -361,6 +374,7 @@ struct PreviewWeatherService: WeatherProviding {
             precipitationLastHour: precipitationLastHour,
             daily: daily,
             hourly: hourly,
+            locationName: locationName,
             fetchedAt: fetchedAt
         )
     }

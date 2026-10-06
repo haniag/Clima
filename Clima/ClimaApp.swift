@@ -9,8 +9,8 @@ import SwiftUI
 
 @main
 struct ClimaApp: App {
-    /// The live weather source — WeatherKit, or the new service once it's been switched
-    /// to — built once for the app's lifetime.
+    /// The live weather source — the new service, or WeatherKit if it's chosen in
+    /// Settings — built once for the app's lifetime.
     ///
     /// `@State` rather than `let` because a `let` on an `App` is re-evaluated whenever
     /// the body is. That would throw away the service, and with it the

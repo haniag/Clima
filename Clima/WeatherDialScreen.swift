@@ -49,18 +49,13 @@ struct WeatherDialScreen: View {
     /// `isDarkMode`, which always had a value, so nobody starts out pinned to Light.
     @AppStorage("darkModeOverride") private var darkModeOverride: Bool?
 
-    /// Whether the app is on the new weather service rather than WeatherKit, flipped by a
-    /// triple-tap on the dial's current icon. Written here, read by `WeatherSourceSwitch`
-    /// on every fetch.
-    @AppStorage(WeatherSourceSwitch.usesNewServiceKey) private var usesNewWeatherService = false
+    /// Which weather service answers. Chosen on the app's page in the iPhone's Settings
+    /// app and read by `WeatherSourceSwitch` on every fetch; the screen watches it only
+    /// to tag the header and to fetch again when it changes.
+    @AppStorage(WeatherSource.key) private var weatherSource: WeatherSource = .default
 
-    /// When the switch to the new service happened, while its confetti is still falling;
-    /// nil the rest of the time.
-    @State private var confettiStart: Date?
-
-    /// The hour at the hourly strip's leading edge. Set to the strip's first hour —
-    /// three before now — whenever a reading lands; the reader's swiping moves it in
-    /// between.
+    /// The hour at the hourly strip's leading edge. Set to the strip's first hour — the
+    /// current one — whenever a reading lands; the reader's swiping moves it in between.
     @State private var hourlyScrollPosition: Date?
 
     /// The appearance actually on screen. With no override this is the phone's, since
@@ -102,12 +97,6 @@ struct WeatherDialScreen: View {
             page
             SettingsDrawer(useCelsius: $useCelsius, isDarkMode: isDarkMode)
                 .padding(.bottom, SettingsDrawer.bottomMargin(scale: deviceScale))
-
-            // Last in the stack so it falls in front of everything, drawer included.
-            if let confettiStart {
-                ConfettiView(start: confettiStart)
-                    .ignoresSafeArea()
-            }
         }
         // On the stack, not on the drawer: a fixed-size child can't grow into the safe
         // area on its own, it can only be *positioned* in whatever box its parent gives
@@ -136,6 +125,15 @@ struct WeatherDialScreen: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active, isReadingStale else { return }
             refresh()
+        }
+        // Switched in the Settings app: fetch from the newly chosen service straight away,
+        // however fresh the current reading is, so what's on screen is its, not the
+        // other's. `load()` rather than `refresh()`, because `refresh()` declines while a
+        // fetch is running — and one from the old service is exactly what should be
+        // overtaken. `fetchGeneration` stops its answer replacing the new one if it lands
+        // late.
+        .onChange(of: weatherSource) {
+            Task { await load() }
         }
     }
 
@@ -211,11 +209,7 @@ struct WeatherDialScreen: View {
                 // Passed through as an optional: with no reading the dial highlights
                 // nothing, rather than sitting lit on `.clear` and telling the reader it's
                 // sunny out while the readout underneath says there's no reading.
-                DialView(
-                    condition: snapshot?.condition,
-                    onRefresh: refresh,
-                    onIconTripleTap: switchWeatherService
-                )
+                DialView(condition: snapshot?.condition, onRefresh: refresh)
                     // The hub hangs below the dial's own layout frame; reserve that
                     // space so the reading below it isn't pushed into the hub.
                     .padding(.bottom, DialView.hubOverhang(scale: deviceScale))
@@ -262,11 +256,15 @@ struct WeatherDialScreen: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            // Tagged with the weather source in use: WK for WeatherKit, WC for the new
-            // service. `climaCaps` uppercases it, so this reads "CLIMA (WK)" on screen.
-            Text(usesNewWeatherService ? "Clima (WC)" : "Clima (WK)")
+            // Where the reading is for, tagged with the weather source in use: WK for
+            // WeatherKit, WC for the new service. `climaCaps` uppercases it, so this
+            // reads "CENTREVILLE (WK)" on screen — or "CLIMA (WK)" until a name is known.
+            // One line, cut short with an ellipsis, so a long place name can't push the
+            // "Updated" time onto a second line.
+            Text("\(snapshot?.locationName ?? "Clima")")
                 .climaCaps(.caption, bold: true)
                 .foregroundStyle(Theme.ink)
+                .lineLimit(1)
 
             Spacer()
 
@@ -284,27 +282,6 @@ struct WeatherDialScreen: View {
                     .climaCaps(.caption)
                     .foregroundStyle(Theme.inkMuted)
             }
-        }
-    }
-
-    /// Swaps between WeatherKit and the new weather service, and fetches from the one
-    /// just chosen straight away so the reading on screen is its, not the other's.
-    ///
-    /// `load()` rather than `refresh()`, because `refresh()` declines while a fetch is
-    /// running — and a fetch from the old service still in flight is exactly the one that
-    /// should be overtaken. `load()`'s `fetchGeneration` check makes sure the old answer,
-    /// if it lands late, doesn't replace the new one.
-    private func switchWeatherService() {
-        usesNewWeatherService.toggle()
-        Task { await load() }
-
-        // The only sign the switch happened, so it plays for its full length and then
-        // takes itself off the screen.
-        let start = Date()
-        confettiStart = start
-        Task {
-            try? await Task.sleep(for: ConfettiView.duration)
-            if confettiStart == start { confettiStart = nil }
         }
     }
 
@@ -476,21 +453,21 @@ struct WeatherDialScreen: View {
         }
     }
 
-    /// Three hours back through the midnight that ends tomorrow, as a row that swipes
+    /// The current hour through the midnight that ends tomorrow, as a row that swipes
     /// sideways.
     ///
     /// Eight columns fit across the panel, the same width the columns had as eight
     /// 3-hour blocks, and a sliver of the ninth shows at the edge to say there's more.
-    /// Swiping settles on whole columns, and the strip opens at its start, so the three
-    /// past hours are in view with "now" fourth — see `scrollHourlyToStart()`. Each
-    /// midnight after the first column is marked as the start of a new day.
+    /// Swiping settles on whole columns, and the strip opens at its start, so "now" is
+    /// the first column — see `scrollHourlyToStart()`. Each midnight after the first
+    /// column is marked as the start of a new day.
     private var hourlyStrip: some View {
         stripPanel {
             ScrollView(.horizontal) {
                 HStack(spacing: 0) {
                     // Keyed by the hour, not `HourlyForecast.id`: every reading makes new
                     // ids, and the scroll position has to survive from one to the next.
-                    let hours = snapshot?.hourly ?? .placeholder()
+                    let hours = visibleHours
                     ForEach(hours, id: \.date) { hour in
                         // The first column is never marked, even at midnight: with
                         // nothing before it, there's no day it follows.
@@ -512,12 +489,23 @@ struct WeatherDialScreen: View {
         .onChange(of: snapshot?.fetchedAt) { scrollHourlyToStart() }
     }
 
-    /// Brings the strip back to its first column — three hours before now, which puts
-    /// "now" fourth — when the screen appears and whenever a new reading lands, so a
-    /// refresh also puts "now" back where it's expected.
+    /// Brings the strip back to its first column — the current hour — when the screen
+    /// appears and whenever a new reading lands, so a refresh also puts "now" back where
+    /// it's expected.
     private func scrollHourlyToStart() {
-        let hours = snapshot?.hourly ?? .placeholder()
-        hourlyScrollPosition = hours.first?.date
+        hourlyScrollPosition = visibleHours.first?.date
+    }
+
+    /// The reading's hours from the current one on.
+    ///
+    /// The services already start the strip at the current hour, but the screen keeps a
+    /// reading through a failed refresh, and by then the hour it started on may be over.
+    /// Trimming here means the strip still opens on "now" rather than on an hour gone by.
+    private var visibleHours: [HourlyForecast] {
+        let thisHour = [HourlyForecast].stripStart(containing: Date())
+        let hours = (snapshot?.hourly ?? .placeholder()).filter { $0.date >= thisHour }
+        // A reading so old that none of its hours are left: show empty slots instead.
+        return hours.isEmpty ? .placeholder() : hours
     }
 
     /// How far in from the panel's sides the columns sit: far enough that the "now"
@@ -661,10 +649,9 @@ private func precipitationChanceText(_ chance: Int?) -> String {
 /// chance of precipitation.
 private struct HourlyColumn: View {
     let hour: HourlyForecast
-    /// Whether this column is the first hour of a new day — tomorrow's midnight, or
-    /// today's when the strip reaches back into yesterday. Its label is the day's name in
-    /// bold, "SAT", in place of "12AM", and a hairline runs down its leading edge, so the
-    /// change of day reads at a glance and says which day it is.
+    /// Whether this column is the first hour of a new day — tomorrow's midnight, or the
+    /// day after's. Its label is the day's name in bold, "SAT", in place of "12AM", so
+    /// the change of day reads at a glance and says which day it is.
     let startsNewDay: Bool
 
     @AppStorage("useCelsius") private var useCelsius = false
@@ -706,17 +693,6 @@ private struct HourlyColumn: View {
             Text(precipitationChanceText(hour.precipitationChance))
                 .font(Theme.valueFont(scale: deviceScale))
                 .foregroundStyle(Theme.panelInkMuted)
-        }
-        // An overlay, so it takes no width: the columns stay the same size either side
-        // of it. It starts just above the label, below the "now" marker's slot, so it
-        // never runs through the marker.
-        .overlay(alignment: .leading) {
-            if startsNewDay {
-                Rectangle()
-                    .fill(Theme.panelInkMuted)
-                    .frame(width: 1 * deviceScale)
-                    .padding(.top, 14 * deviceScale)
-            }
         }
     }
 }

@@ -21,9 +21,6 @@ struct DialView: View {
     /// rather than confidently indicating whichever condition a default landed on.
     let condition: WeatherCondition?
     var onRefresh: () -> Void = {}
-    /// A triple-tap on the icon under the pointer — the hidden switch between weather
-    /// services. The dial only reports the tap; what it does is the screen's business.
-    var onIconTripleTap: () -> Void = {}
 
     /// How much bigger or smaller this screen is than the iPhone 16 Pro this dial was
     /// tuned on (see `Theme.tunedScreenWidth`). Every size below multiplies by this, so
@@ -165,18 +162,6 @@ struct DialView: View {
                 .frame(width: diameter, height: diameter)
 
             pointerShaft
-
-            // The hidden switch between weather services, over the icon the pointer is
-            // on. A fixed spot rather than a gesture on the icon itself: the wheel turns
-            // so that whichever icon is current sits here, and the layers above the wheel
-            // would take the tap first anyway. Nothing marks it as tappable, on purpose,
-            // and it's kept out of VoiceOver for the same reason.
-            Color.clear
-                .frame(width: iconDiameter, height: iconDiameter)
-                .contentShape(Rectangle())
-                .onTapGesture(count: 3, perform: onIconTripleTap)
-                .position(x: diameter / 2, y: iconInset + iconDiameter / 2)
-                .accessibilityHidden(true)
 
             refreshButton
                 .position(hubCenter)

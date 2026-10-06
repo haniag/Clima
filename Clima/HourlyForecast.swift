@@ -41,18 +41,10 @@ struct HourlyForecast: Identifiable {
 }
 
 extension Array where Element == HourlyForecast {
-    /// How many hours before the current one the strip reaches back.
-    static let pastHourCount = 3
-
-    /// Where the strip begins: three hours before the one `date` falls in.
-    ///
-    /// Those three have already happened, so they show what the weather was rather than
-    /// what it will be — WeatherKit can say, and for the new service they come from
-    /// `HourlyCache`.
+    /// Where the strip begins: the start of the hour `date` falls in, so "now" is always
+    /// the first column.
     static func stripStart(containing date: Date) -> Date {
-        let calendar = Calendar.current
-        let thisHour = calendar.dateInterval(of: .hour, for: date)?.start ?? date
-        return calendar.date(byAdding: .hour, value: -pastHourCount, to: thisHour) ?? thisHour
+        Calendar.current.dateInterval(of: .hour, for: date)?.start ?? date
     }
 
     /// Where the strip ends: the midnight at the end of tomorrow, which is included as the

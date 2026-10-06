@@ -6,7 +6,7 @@
 import CoreLocation
 import Foundation
 
-/// The second weather source: the one the dial's hidden triple-tap switches to.
+/// The new weather source — the default, and one of the two chosen between in Settings.
 ///
 /// It stands in the same place `WeatherService` does — both are `WeatherProviding` — so
 /// the screen can't tell them apart and nothing outside this file knows this API exists.
@@ -22,7 +22,8 @@ final class NewWeatherService: WeatherProviding {
     ///
     /// Still to be decided, so it's nil for now, and a fetch reports "not set up" rather
     /// than sending a request anywhere.
-    static let currentConditionsURL: URL? = nil
+    //static let currentConditionsURL: URL? = nil
+    static let currentConditionsURL: URL? = URL(string: "https://api.weather.com/v3/wx/observations/current")
     
    
     /// The 15-day forecast endpoint, path included, the same way as above. It takes the
@@ -30,14 +31,16 @@ final class NewWeatherService: WeatherProviding {
     ///
     /// Also still to be decided. While it's nil the dial still works and the 7-day strip
     /// shows dashes, so current conditions can be tried out before this address is known.
-    static let dailyForecastURL: URL? = nil
+    //static let dailyForecastURL: URL? = nil
+    static let dailyForecastURL: URL? = URL(string: "https://api.weather.com/v3/wx/forecast/daily/15day")
     
 
     /// The hourly forecast endpoint, path included, with the same query string again.
     ///
     /// Also still to be decided. While it's nil the hourly strip shows dashes apart from
     /// the hour we're in, which shows the live reading.
-    static let hourlyForecastURL: URL? = nil
+    //static let hourlyForecastURL: URL? = nil
+    static let hourlyForecastURL: URL? = URL(string: "https://api.weather.com/v3/wx/forecast/hourly/3day")
     
     
 
@@ -70,6 +73,9 @@ final class NewWeatherService: WeatherProviding {
         async let observationRequest = Self.get(CurrentObservation.self, from: endpoint, at: location)
         async let dailyRequest = Self.getIfSet(FifteenDayForecast.self, from: Self.dailyForecastURL, at: location)
         async let hourlyRequest = Self.getIfSet(HourlyForecastResponse.self, from: Self.hourlyForecastURL, at: location)
+        // The place name goes out with them but isn't part of that rule — it can't fail,
+        // only come back nil. See `LocationNameService`.
+        async let locationName = LocationNameService.name(for: location)
         let (observation, forecast, hourly) = try await (observationRequest, dailyRequest, hourlyRequest)
 
         let condition = WeatherCondition(iconCode: observation.iconCode)
@@ -86,6 +92,7 @@ final class NewWeatherService: WeatherProviding {
             daily: forecast.map { Self.dailyForecasts(from: $0, today: fetchedAt) }
                 ?? .placeholder(from: fetchedAt),
             hourly: Self.hourlyForecasts(from: hourly, now: (condition, temperature), at: fetchedAt),
+            locationName: await locationName,
             fetchedAt: fetchedAt
         )
     }
@@ -218,17 +225,15 @@ final class NewWeatherService: WeatherProviding {
         return url
     }
 
-    /// Three hours back through the midnight that ends tomorrow, each filled from the
+    /// The current hour through the midnight that ends tomorrow, each filled from the
     /// forecast for that hour.
     ///
     /// The hour we're in shows the live reading instead — same rule as WeatherKit's
     /// strip: the "now" column never disagrees with the dial above it.
     ///
-    /// Unlike WeatherKit, this forecast starts at the current hour and doesn't reach back,
-    /// so the three hours behind us are left empty here and `HourlyCache` fills them from
-    /// earlier fetches. Reaching the end of tomorrow takes up to 48 hours of forecast, so
-    /// the endpoint needs to be one that covers two days. Every hour shows dashes while
-    /// the endpoint isn't set, apart from what the cache has.
+    /// Reaching the end of tomorrow takes up to 48 hours of forecast, so the endpoint
+    /// needs to be one that covers two days. Every hour shows dashes while the endpoint
+    /// isn't set, apart from what `HourlyCache` has.
     private static func hourlyForecasts(
         from forecast: HourlyForecastResponse?,
         now: (condition: WeatherCondition, temperature: Int),
