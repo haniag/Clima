@@ -4,10 +4,10 @@ DerivedData/
 build/
 
 # API key — see README for how to create it
-Clima/Secrets.swift
+**/Clima/Secrets.swift
 
 # Personal Claude Code settings (local paths and permissions)
-.claude/settings.local.json
+**/.claude/settings.local.json
 
 # Reference material that isn't ours to publish
 misc/

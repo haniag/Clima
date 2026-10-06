@@ -37,8 +37,7 @@ final class NewWeatherService: WeatherProviding {
 
     /// The hourly forecast endpoint, path included, with the same query string again.
     ///
-    /// Also still to be decided. While it's nil the hourly strip shows dashes apart from
-    /// the hour we're in, which shows the live reading.
+    /// Also still to be decided. While it's nil the hourly strip shows dashes.
     //static let hourlyForecastURL: URL? = nil
     static let hourlyForecastURL: URL? = URL(string: "https://api.weather.com/v3/wx/forecast/hourly/3day")
     
@@ -91,7 +90,8 @@ final class NewWeatherService: WeatherProviding {
             precipitationLastHour: observation.precip1Hour,
             daily: forecast.map { Self.dailyForecasts(from: $0, today: fetchedAt) }
                 ?? .placeholder(from: fetchedAt),
-            hourly: Self.hourlyForecasts(from: hourly, now: (condition, temperature), at: fetchedAt),
+            hourly: Self.hourlyForecasts(from: hourly, at: fetchedAt),
+            sunEvents: Self.sunEvents(today: observation, later: forecast),
             locationName: await locationName,
             fetchedAt: fetchedAt
         )
@@ -177,10 +177,44 @@ final class NewWeatherService: WeatherProviding {
     /// the same moment whatever time zone the phone is set to. Nil when the service
     /// didn't send one or it doesn't parse, in which case the column stays on daytime.
     private static func sunset(from forecast: FifteenDayForecast, at index: Int) -> Date? {
-        element(forecast.sunsetTimeLocal, index).flatMap { sunsetFormatter.date(from: $0) }
+        element(forecast.sunsetTimeLocal, index).flatMap { localTimeFormatter.date(from: $0) }
     }
 
-    private static let sunsetFormatter: DateFormatter = {
+    /// Sunrises and sunsets for the hourly strip, in time order.
+    ///
+    /// Today's come from current conditions' `sunriseTimeLocal` and `sunsetTimeLocal`.
+    /// The strip runs on through tomorrow, though, and current conditions only know
+    /// about today, so the rest come from the 15-day forecast, which carries the same
+    /// two fields for every day. Where both have the same day's sunrise (or sunset),
+    /// current conditions' is the one kept.
+    private static func sunEvents(today observation: CurrentObservation, later forecast: FifteenDayForecast?) -> [SunEvent] {
+        let calendar = Calendar.current
+        let current = [
+            observation.sunriseTimeLocal.flatMap { localTimeFormatter.date(from: $0) }
+                .map { SunEvent(kind: .sunrise, date: $0) },
+            observation.sunsetTimeLocal.flatMap { localTimeFormatter.date(from: $0) }
+                .map { SunEvent(kind: .sunset, date: $0) },
+        ].compactMap { $0 }
+
+        let forecastEvents = sunEvents(.sunrise, from: forecast?.sunriseTimeLocal)
+            + sunEvents(.sunset, from: forecast?.sunsetTimeLocal)
+        let later = forecastEvents.filter { event in
+            !current.contains { $0.kind == event.kind && calendar.isDate($0.date, inSameDayAs: event.date) }
+        }
+        return (current + later).sorted { $0.date < $1.date }
+    }
+
+    /// One of the 15-day forecast's lists of times as events, skipping nulls and any
+    /// that don't parse.
+    private static func sunEvents(_ kind: SunEvent.Kind, from times: [String?]?) -> [SunEvent] {
+        (times ?? []).compactMap { time in
+            time.flatMap { localTimeFormatter.date(from: $0) }.map { SunEvent(kind: kind, date: $0) }
+        }
+    }
+
+    /// Reads the service's local times, like `"2026-09-25T19:03:12-0400"` — sunrises and
+    /// sunsets, in both current conditions and the 15-day forecast.
+    private static let localTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         // POSIX so the phone's own region and 12/24-hour setting can't change how the
         // string is read.
@@ -225,51 +259,28 @@ final class NewWeatherService: WeatherProviding {
         return url
     }
 
-    /// The current hour through the midnight that ends tomorrow, each filled from the
-    /// forecast for that hour.
+    /// Every hour the forecast sends from the next one on — the whole of it, so the
+    /// strip is as long as the endpoint's forecast (72 hours for the 3-day one).
     ///
-    /// The hour we're in shows the live reading instead — same rule as WeatherKit's
-    /// strip: the "now" column never disagrees with the dial above it.
-    ///
-    /// Reaching the end of tomorrow takes up to 48 hours of forecast, so the endpoint
-    /// needs to be one that covers two days. Every hour shows dashes while the endpoint
-    /// isn't set, apart from what `HourlyCache` has.
-    private static func hourlyForecasts(
-        from forecast: HourlyForecastResponse?,
-        now: (condition: WeatherCondition, temperature: Int),
-        at date: Date
-    ) -> [HourlyForecast] {
-        let calendar = Calendar.current
-        return [HourlyForecast].placeholder(from: date).map { slot in
-            // Matched by time rather than position, for the same reason as the days.
-            let index = forecast?.validTimeUtc.firstIndex(where: {
-                calendar.isDate(Date(timeIntervalSince1970: $0), equalTo: slot.date, toGranularity: .hour)
-            })
-            let precipChance = index
-                .flatMap { element(forecast?.precipChance, $0) }
-                .map { Int($0.rounded()) }
-
-            // The live reading has no chance of precipitation, so the current hour still
-            // takes that one from the forecast.
-            if slot.contains(date) {
-                return HourlyForecast(
-                    date: slot.date,
-                    condition: now.condition,
-                    temperature: now.temperature,
-                    precipitationChance: precipChance
-                )
-            }
-            guard let forecast, let index else {
-                return slot
-            }
+    /// Each hour carries its own time from `validTimeUtc`, so its column is labelled by
+    /// that, not by where it sits in the list. The hour we're in is left out: the dial
+    /// already shows it. Every hour shows dashes while the endpoint isn't set, apart from
+    /// what `HourlyCache` has.
+    private static func hourlyForecasts(from forecast: HourlyForecastResponse?, at date: Date) -> [HourlyForecast] {
+        guard let forecast else { return .placeholder(from: date) }
+        let start = [HourlyForecast].stripStart(after: date)
+        let hours = forecast.validTimeUtc.indices.compactMap { index -> HourlyForecast? in
+            let hourDate = Date(timeIntervalSince1970: forecast.validTimeUtc[index])
+            guard hourDate >= start else { return nil }
             return HourlyForecast(
-                date: slot.date,
+                date: hourDate,
                 // Night codes keep their moon here: an hour, unlike a day, is either one.
                 condition: element(forecast.iconCode, index).map { WeatherCondition(iconCode: $0) },
                 temperature: element(forecast.temperature, index).map { Int($0.rounded()) },
-                precipitationChance: precipChance
+                precipitationChance: element(forecast.precipChance, index).map { Int($0.rounded()) }
             )
         }
+        return hours.isEmpty ? .placeholder(from: date) : hours
     }
 }
 
@@ -293,6 +304,11 @@ nonisolated private struct CurrentObservation: Decodable {
     /// Inches in the last hour, because the request asks for `units=e`.
     let precip1Hour: Double?
     let wxPhraseShort: String?
+    /// Today's sunrise and sunset, as local time with its UTC offset, e.g.
+    /// `"2026-09-25T07:00:23-0400"`. Optional, so a reading still decodes without them —
+    /// the strip just goes without today's sunrise or sunset column.
+    let sunriseTimeLocal: String?
+    let sunsetTimeLocal: String?
 }
 
 /// The parts of the 15-day forecast response the app reads.
@@ -311,6 +327,9 @@ nonisolated private struct FifteenDayForecast: Decodable {
     /// Optional as a whole, so a response without it still decodes; the strip just
     /// doesn't switch today to night.
     let sunsetTimeLocal: [String?]?
+    /// Each day's sunrise, the same way. Used for the hourly strip's sunrise columns
+    /// after today's.
+    let sunriseTimeLocal: [String?]?
     /// The service sends this as a list holding one object.
     let daypart: [DayParts]
 

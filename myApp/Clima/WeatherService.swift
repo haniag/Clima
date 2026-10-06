@@ -39,12 +39,16 @@ struct WeatherSnapshot {
     let precipitationLastHour: Double?
     /// Today and the six days after it, for the upper strip.
     let daily: [DailyForecast]
-    /// Every hour from the current one through the midnight that ends tomorrow, one each,
-    /// for the lower strip — see `HourlyForecast.stripStart`/`stripEnd`.
+    /// Every hour of the forecast from the next one on, one each, for the lower strip —
+    /// see `HourlyForecast.stripStart`/`stripLength`.
     ///
     /// A `var`, unlike the rest, so `WeatherSourceSwitch` can fill its gaps from
     /// `HourlyCache` after the service has answered.
     var hourly: [HourlyForecast]
+    /// Sunrises and sunsets, at least today's and tomorrow's, in time order. They can
+    /// include ones already past or beyond the strip — the screen picks out the ones that
+    /// fall between its hours.
+    let sunEvents: [SunEvent]
 
     /// What the place the reading is for is called — "Centreville" — or nil when the
     /// lookup isn't set up or didn't answer. See `LocationNameService`.
@@ -165,17 +169,18 @@ final class WeatherService: WeatherProviding {
         // moment — three separate calls could straddle a condition change and leave the
         // dial disagreeing with the strip directly under it.
         //
-        // The hours are asked for by date: WeatherKit's default hourly range runs out
-        // partway through tomorrow. The end is an hour past the strip's last column, so
-        // that column's hour is inside the range. The start is an hour before the strip's
-        // first column — the hour just finished isn't on the strip, but it's where
+        // The hours are asked for by date: WeatherKit's default hourly range is only about
+        // a day. The end is `stripLength` hours after the strip's first column, so the
+        // strip's last column is the last hour inside the range. The start is the hour
+        // just finished — two before the strip's first column. Neither it nor the hour
+        // we're in is on the strip, but the finished one is where
         // `precipitationLastHour` reads from.
         let now = Date()
         let calendar = Calendar.current
-        let stripStart = [HourlyForecast].stripStart(containing: now)
-        let stripEnd = [HourlyForecast].stripEnd(containing: now)
-        let hoursStart = calendar.date(byAdding: .hour, value: -1, to: stripStart) ?? stripStart
-        let hoursEnd = calendar.date(byAdding: .hour, value: 1, to: stripEnd) ?? stripEnd
+        let thisHour = calendar.dateInterval(of: .hour, for: now)?.start ?? now
+        let stripStart = [HourlyForecast].stripStart(after: now)
+        let hoursStart = calendar.date(byAdding: .hour, value: -1, to: thisHour) ?? thisHour
+        let hoursEnd = calendar.date(byAdding: .hour, value: [HourlyForecast].stripLength, to: stripStart) ?? stripStart
         let (current, daily, hourly) = try await weatherKit.weather(
             for: location,
             including: .current, .daily,
@@ -193,7 +198,8 @@ final class WeatherService: WeatherProviding {
             humidity: Int((current.humidity * 100).rounded()),
             precipitationLastHour: Self.precipitationLastHour(from: hourly),
             daily: Self.dailyForecasts(from: daily),
-            hourly: Self.hourlyForecasts(from: hourly, now: (condition, temperature)),
+            hourly: Self.hourlyForecasts(from: hourly),
+            sunEvents: Self.sunEvents(from: daily),
             locationName: await locationName,
             // Stamped when the answer lands, not when the request left, so the time on
             // screen is the age of the data rather than the age of the attempt.
@@ -256,52 +262,41 @@ final class WeatherService: WeatherProviding {
         return WeatherCondition(weatherKitCondition: day.condition, isDaylight: true)
     }
 
-    /// The current hour through the midnight that ends tomorrow — see
-    /// `HourlyForecast.stripStart`/`stripEnd`.
+    /// The next `stripLength` hours (72) — see `HourlyForecast.stripStart`.
     ///
     /// Slot-first for the same reason as the days above. The request covers all of these
     /// hours, so normally every one has a reading to show; where the forecast doesn't
     /// reach, that one hour is left for
     /// `HourlyCache` to fill, or renders dashes, and the rest stay exactly where they were.
-    ///
-    /// The hour we're in right now shows `now` — the same live reading the dial points
-    /// at — rather than its forecast. An hour's forecast is for the moment it starts, so
-    /// by the end of the hour it can be out of date, and the "now" column would disagree
-    /// with the dial directly above it.
-    private static func hourlyForecasts(
-        from forecast: Forecast<HourWeather>,
-        now: (condition: WeatherCondition, temperature: Int)
-    ) -> [HourlyForecast] {
+    private static func hourlyForecasts(from forecast: Forecast<HourWeather>) -> [HourlyForecast] {
         let calendar = Calendar.current
-        let fetchedAt = Date()
 
-        return [HourlyForecast].placeholder(from: fetchedAt).map { slot in
-            let hour = forecast.first(
+        return [HourlyForecast].placeholder(from: Date()).map { slot in
+            guard let hour = forecast.first(
                 where: { calendar.isDate($0.date, equalTo: slot.date, toGranularity: .hour) }
-            )
-            // WeatherKit gives 0–1; the app stores a whole percent, as for the days.
-            let precipChance = hour.map { Int(($0.precipitationChance * 100).rounded()) }
-
-            // The live reading has no chance of precipitation, so the current hour still
-            // takes that one from the forecast.
-            if slot.contains(fetchedAt) {
-                return HourlyForecast(
-                    date: slot.date,
-                    condition: now.condition,
-                    temperature: now.temperature,
-                    precipitationChance: precipChance
-                )
-            }
-            guard let hour else {
+            ) else {
                 return slot
             }
             return HourlyForecast(
                 date: slot.date,
                 condition: WeatherCondition(weatherKitCondition: hour.condition, isDaylight: hour.isDaylight),
                 temperature: fahrenheit(hour.temperature),
-                precipitationChance: precipChance
+                // WeatherKit gives 0–1; the app stores a whole percent, as for the days.
+                precipitationChance: Int((hour.precipitationChance * 100).rounded())
             )
         }
+    }
+
+    /// Every sunrise and sunset in the daily forecast, from `DayWeather.sun`. A day near
+    /// the poles can be missing one or both, and simply contributes fewer.
+    private static func sunEvents(from forecast: Forecast<DayWeather>) -> [SunEvent] {
+        forecast.flatMap { day in
+            [
+                day.sun.sunrise.map { SunEvent(kind: .sunrise, date: $0) },
+                day.sun.sunset.map { SunEvent(kind: .sunset, date: $0) },
+            ].compactMap { $0 }
+        }
+        .sorted { $0.date < $1.date }
     }
 
     /// What fell in the last full hour — 11:00 to 12:00 when it's 12:25 — in inches.
@@ -348,6 +343,7 @@ struct PreviewWeatherService: WeatherProviding {
     /// now — the running app's strips come from WeatherKit.
     var daily: [DailyForecast] = .sample
     var hourly: [HourlyForecast] = .sample
+    var sunEvents: [SunEvent] = .sample
     var locationName: String? = "Centreville"
     /// Set this to make every fetch fail instead of answering.
     var error: Error?
@@ -374,6 +370,7 @@ struct PreviewWeatherService: WeatherProviding {
             precipitationLastHour: precipitationLastHour,
             daily: daily,
             hourly: hourly,
+            sunEvents: sunEvents,
             locationName: locationName,
             fetchedAt: fetchedAt
         )

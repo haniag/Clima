@@ -54,9 +54,14 @@ struct WeatherDialScreen: View {
     /// to tag the header and to fetch again when it changes.
     @AppStorage(WeatherSource.key) private var weatherSource: WeatherSource = .default
 
-    /// The hour at the hourly strip's leading edge. Set to the strip's first hour — the
-    /// current one — whenever a reading lands; the reader's swiping moves it in between.
-    @State private var hourlyScrollPosition: Date?
+    /// The column at the hourly strip's leading edge. Set to the strip's first column
+    /// whenever a reading lands; the reader's swiping moves it in between.
+    @State private var hourlyScrollPosition: HourlyStripItem.ID?
+
+    /// Which of the hourly strip's columns is at the middle of its panel right now,
+    /// updated continuously while it's swiped — unlike `hourlyScrollPosition`, which only
+    /// settles once the strip stops. Drives the 7-day strip's marker; see `markedDay`.
+    @State private var hourlyMiddleIndex = 0
 
     /// The appearance actually on screen. With no override this is the phone's, since
     /// `.preferredColorScheme(nil)` below leaves the system's choice in place.
@@ -225,8 +230,14 @@ struct WeatherDialScreen: View {
 
                 VStack(spacing: Theme.stripGap * deviceScale) {
                     strip {
+                        // Worked out once here rather than per column: it rebuilds the
+                        // hourly strip's list of columns to find the one in the middle.
+                        let marked = markedDay
                         ForEach(snapshot?.daily ?? .placeholder()) { day in
-                            ForecastDayColumn(day: day)
+                            ForecastDayColumn(
+                                day: day,
+                                isMarked: Calendar.current.isDate(day.date, inSameDayAs: marked)
+                            )
                         }
                     }
 
@@ -256,12 +267,12 @@ struct WeatherDialScreen: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            // Where the reading is for, tagged with the weather source in use: WK for
-            // WeatherKit, WC for the new service. `climaCaps` uppercases it, so this
-            // reads "CENTREVILLE (WK)" on screen — or "CLIMA (WK)" until a name is known.
-            // One line, cut short with an ellipsis, so a long place name can't push the
-            // "Updated" time onto a second line.
-            Text("\(snapshot?.locationName ?? "Clima")")
+            // Where the reading is for. `climaCaps` uppercases it, so this reads
+            // "CENTREVILLE" on screen. Blank until a name is known — a space rather than
+            // nothing, so the header keeps its height and nothing below it jumps when the
+            // name arrives. One line, cut short with an ellipsis, so a long place name
+            // can't push the "Updated" time onto a second line.
+            Text(snapshot?.locationName ?? " ")
                 .climaCaps(.caption, bold: true)
                 .foregroundStyle(Theme.ink)
                 .lineLimit(1)
@@ -275,7 +286,7 @@ struct WeatherDialScreen: View {
             // anyone having to ask.
             //
             // It has the header's right-hand end to itself — there's no date — and it's
-            // the same size as the app name beside it, so the header keeps the same
+            // the same size as the place name beside it, so the header keeps the same
             // height whether or not there's a reading yet.
             if let updatedLabel {
                 Text(updatedLabel)
@@ -441,9 +452,9 @@ struct WeatherDialScreen: View {
 
     /// A row of columns on its own panel. The "now" marker sits flush with the panel's
     /// top edge, so the red mark reads as part of the panel rather than floating inside
-    /// it — and it's the only thing distinguishing this hour, now that the columns no
-    /// longer differ in colour. The 7-day strip marks today the same way, on its first
-    /// column.
+    /// it — and it's the only thing distinguishing that column, now that the columns no
+    /// longer differ in colour. The 7-day strip marks today; the hourly strip marks its
+    /// first column.
     private func strip<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         stripPanel {
             HStack(spacing: 0) {
@@ -453,26 +464,32 @@ struct WeatherDialScreen: View {
         }
     }
 
-    /// The current hour through the midnight that ends tomorrow, as a row that swipes
-    /// sideways.
+    /// Every forecast hour from the next one on, as a row that swipes sideways, with a
+    /// column for each sunrise and sunset between the hours it falls between.
     ///
     /// Eight columns fit across the panel, the same width the columns had as eight
     /// 3-hour blocks, and a sliver of the ninth shows at the edge to say there's more.
-    /// Swiping settles on whole columns, and the strip opens at its start, so "now" is
-    /// the first column — see `scrollHourlyToStart()`. Each midnight after the first
-    /// column is marked as the start of a new day.
+    /// Swiping settles on whole columns, and the strip opens at its start — see
+    /// `scrollHourlyToStart()`. The 7-day strip's marker follows the day being swiped
+    /// through — see `markedDay`.
     private var hourlyStrip: some View {
         stripPanel {
             ScrollView(.horizontal) {
                 HStack(spacing: 0) {
-                    // Keyed by the hour, not `HourlyForecast.id`: every reading makes new
-                    // ids, and the scroll position has to survive from one to the next.
-                    let hours = visibleHours
-                    ForEach(hours, id: \.date) { hour in
-                        // The first column is never marked, even at midnight: with
-                        // nothing before it, there's no day it follows.
-                        HourlyColumn(hour: hour, startsNewDay: hour.isMidnight && hour.date != hours.first?.date)
-                            .containerRelativeFrame(.horizontal, count: 8, spacing: 0)
+                    let items = visibleStripItems
+                    ForEach(items) { item in
+                        // The first column carries the "now" marker: it's the one
+                        // closest to now, whether an hour or a sunrise or sunset.
+                        let isFirst = item.id == items.first?.id
+                        Group {
+                            switch item {
+                            case .hour(let hour):
+                                HourlyColumn(hour: hour, isMarked: isFirst)
+                            case .sun(let event):
+                                SunEventColumn(event: event, isMarked: isFirst)
+                            }
+                        }
+                        .containerRelativeFrame(.horizontal, count: 8, spacing: 0)
                     }
                 }
                 .scrollTargetLayout()
@@ -484,28 +501,72 @@ struct WeatherDialScreen: View {
             .scrollTargetBehavior(.viewAligned)
             .scrollIndicators(.hidden)
             .scrollPosition(id: $hourlyScrollPosition, anchor: .leading)
+            // Which column has reached the middle of the panel, read continuously while
+            // the strip moves, so the 7-day marker follows mid-swipe — see `markedDay`.
+            // It's the last column whose own centre has reached or passed the panel's
+            // centre: tomorrow's 12AM counts once it's swiped to the middle, and stops
+            // counting once it's swiped back past it.
+            //
+            // Every column is the same width, so the content's width shared out between
+            // them gives that width. The content's own coordinates start at the first
+            // column's leading edge, and `contentOffset` is where the panel's left edge
+            // sits in them, so half the panel's width on from it is its centre. The
+            // panel's width is the container's plus the side margins, which
+            // `containerSize` leaves out.
+            .onScrollGeometryChange(for: Int.self) { geometry in
+                let count = visibleStripItems.count
+                guard count > 0, geometry.contentSize.width > 0 else { return 0 }
+                let columnWidth = geometry.contentSize.width / CGFloat(count)
+                let panelWidth = geometry.containerSize.width
+                    + geometry.contentInsets.leading + geometry.contentInsets.trailing
+                let panelCentre = geometry.contentOffset.x + panelWidth / 2
+                let index = Int((panelCentre / columnWidth - 0.5).rounded(.down))
+                return min(max(index, 0), count - 1)
+            } action: { _, index in
+                hourlyMiddleIndex = index
+            }
         }
         .onAppear(perform: scrollHourlyToStart)
         .onChange(of: snapshot?.fetchedAt) { scrollHourlyToStart() }
     }
 
-    /// Brings the strip back to its first column — the current hour — when the screen
-    /// appears and whenever a new reading lands, so a refresh also puts "now" back where
-    /// it's expected.
+    /// Brings the strip back to its first column when the screen appears and whenever a
+    /// new reading lands, so a refresh also puts what's next back where it's expected.
     private func scrollHourlyToStart() {
-        hourlyScrollPosition = visibleHours.first?.date
+        hourlyScrollPosition = visibleStripItems.first?.id
     }
 
-    /// The reading's hours from the current one on.
+    /// The day the 7-day strip marks: the day of the column at the middle of the hourly
+    /// panel. Swiping tomorrow's 12AM to the middle and beyond moves the marker above onto
+    /// tomorrow, and swiping it back past the middle brings the marker home.
+    private var markedDay: Date {
+        let items = visibleStripItems
+        guard items.indices.contains(hourlyMiddleIndex) else { return Date() }
+        return items[hourlyMiddleIndex].id.date
+    }
+
+    /// The reading's hours from the next one on, with the sunrises and sunsets that fall
+    /// among them slotted in by time.
     ///
-    /// The services already start the strip at the current hour, but the screen keeps a
-    /// reading through a failed refresh, and by then the hour it started on may be over.
-    /// Trimming here means the strip still opens on "now" rather than on an hour gone by.
-    private var visibleHours: [HourlyForecast] {
-        let thisHour = [HourlyForecast].stripStart(containing: Date())
-        let hours = (snapshot?.hourly ?? .placeholder()).filter { $0.date >= thisHour }
+    /// The services already start the strip at the next hour, but the screen keeps a
+    /// reading through a failed refresh, and by then that hour may have come and gone.
+    /// Trimming here means the strip still opens on what's next rather than on an hour
+    /// gone by. Sunrises and sunsets are trimmed to the same window: anything still to
+    /// come — so one due before the first hour column leads the strip — up to the last
+    /// hour column.
+    private var visibleStripItems: [HourlyStripItem] {
+        let now = Date()
+        let firstHour = [HourlyForecast].stripStart(after: now)
+        var hours = (snapshot?.hourly ?? .placeholder()).filter { $0.date >= firstHour }
         // A reading so old that none of its hours are left: show empty slots instead.
-        return hours.isEmpty ? .placeholder() : hours
+        if hours.isEmpty {
+            hours = .placeholder()
+        }
+        let lastHour = hours.last?.date ?? firstHour
+        let sunEvents = (snapshot?.sunEvents ?? []).filter { $0.date > now && $0.date < lastHour }
+
+        return (hours.map(HourlyStripItem.hour) + sunEvents.map(HourlyStripItem.sun))
+            .sorted { $0.sortKey < $1.sortKey }
     }
 
     /// How far in from the panel's sides the columns sit: far enough that the "now"
@@ -581,19 +642,15 @@ private let baseStripCornerRadius: CGFloat = 18
 /// chance of precipitation.
 private struct ForecastDayColumn: View {
     let day: DailyForecast
+    /// Whether this column carries the marker: the day the hourly strip below is
+    /// showing — see `markedDay`. Today, until the hours are swiped into another day.
+    let isMarked: Bool
 
     @AppStorage("useCelsius") private var useCelsius = false
     @Environment(\.deviceScale) private var deviceScale
 
-    private var isToday: Bool {
-        Calendar.current.isDateInToday(day.date)
-    }
-
     var body: some View {
-        // Marked even though the strip always opens on today, so today is always the
-        // first column: the marker is what the hourly strip below uses to say "now",
-        // and the two rows read as one instrument when both carry it.
-        StripColumn(isActive: isToday) {
+        StripColumn(isActive: isMarked) {
             Text(day.dayLetter)
                 .climaCaps(.heading)
                 .foregroundStyle(Theme.panelInk)
@@ -649,24 +706,18 @@ private func precipitationChanceText(_ chance: Int?) -> String {
 /// chance of precipitation.
 private struct HourlyColumn: View {
     let hour: HourlyForecast
-    /// Whether this column is the first hour of a new day — tomorrow's midnight, or the
-    /// day after's. Its label is the day's name in bold, "SAT", in place of "12AM", so
-    /// the change of day reads at a glance and says which day it is.
-    let startsNewDay: Bool
+    /// Whether this column carries the "now" marker — see `hourlyStrip`.
+    let isMarked: Bool
 
     @AppStorage("useCelsius") private var useCelsius = false
     @Environment(\.deviceScale) private var deviceScale
 
-    private var isNow: Bool {
-        hour.contains(Date())
-    }
-
     var body: some View {
-        StripColumn(isActive: isNow) {
-            // `climaCaps` uppercases it, so "Sat" reads "SAT". The hours either side say
-            // it's midnight, so "12AM" isn't missed.
-            Text(startsNewDay ? hour.date.formatted(.dateTime.weekday(.abbreviated)) : hour.timeLabel)
-                .climaCaps(.heading, bold: startsNewDay)
+        StripColumn(isActive: isMarked) {
+            // Midnight is "12AM" like any other hour; the 7-day strip's marker is what
+            // says which day the strip has reached.
+            Text(hour.timeLabel)
+                .climaCaps(.heading)
                 .foregroundStyle(Theme.panelInk)
 
             // Same as the 7-day column: no condition means no icon, but the frame stays
@@ -683,8 +734,6 @@ private struct HourlyColumn: View {
             }
             .frame(width: baseStripContentWidth * deviceScale, height: baseStripContentWidth * deviceScale)
 
-            // Regular even for the current hour: the marker above the column says which
-            // one is now, and the bold reading for now is the big one under the dial.
             Text(temperatureText(hour.temperature, useCelsius: useCelsius))
                 .font(Theme.valueFont(scale: deviceScale))
                 .foregroundStyle(Theme.panelInk)
@@ -694,6 +743,83 @@ private struct HourlyColumn: View {
                 .font(Theme.valueFont(scale: deviceScale))
                 .foregroundStyle(Theme.panelInkMuted)
         }
+    }
+}
+
+/// One column on the hourly strip: an hour, or a sunrise or sunset between two of them.
+private enum HourlyStripItem: Identifiable {
+    case hour(HourlyForecast)
+    case sun(SunEvent)
+
+    /// What the strip's scroll position is kept in. Built from the hour's start or the
+    /// event itself rather than `HourlyForecast.id`, because every reading makes new ids
+    /// and the scroll position has to survive from one to the next.
+    enum ID: Hashable {
+        case hour(Date)
+        case sun(SunEvent)
+
+        /// When the column is: the hour's start, or the event's moment.
+        var date: Date {
+            switch self {
+            case .hour(let date): date
+            case .sun(let event): event.date
+            }
+        }
+    }
+
+    var id: ID {
+        switch self {
+        case .hour(let hour): .hour(hour.date)
+        case .sun(let event): .sun(event)
+        }
+    }
+
+    /// Orders the columns by time. A sunrise or sunset at exactly the top of an hour
+    /// goes after that hour's column, the same as one a minute later would.
+    var sortKey: (Date, Int) {
+        switch self {
+        case .hour(let hour): (hour.date, 0)
+        case .sun(let event): (event.date, 1)
+        }
+    }
+}
+
+/// A sunrise or sunset column on the hourly strip: the time it happens, to the minute,
+/// over its icon. The temperature and rain-chance rows are left empty — there's no
+/// forecast for a moment, only for an hour.
+private struct SunEventColumn: View {
+    let event: SunEvent
+    /// Whether this column carries the "now" marker — see `hourlyStrip`.
+    let isMarked: Bool
+
+    @Environment(\.deviceScale) private var deviceScale
+
+    var body: some View {
+        StripColumn(isActive: isMarked) {
+            Text(event.timeLabel)
+                .climaCaps(.heading)
+                .foregroundStyle(Theme.panelInk)
+
+            // The artwork fills nearly its whole canvas, where the condition icons only
+            // fill about half of theirs (see `baseStripContentWidth`), so it's drawn at a
+            // bit over half the frame to come out the same size as its neighbours. The
+            // outer frame matches theirs so the rows below stay on the same baselines.
+            Image(event.iconName)
+                .resizable()
+                .scaledToFit()
+                .frame(width: baseStripContentWidth * 0.55 * deviceScale)
+                .frame(width: baseStripContentWidth * deviceScale, height: baseStripContentWidth * deviceScale)
+
+            // Held open but not shown, so the column is as tall as the hours either side.
+            Text("—")
+                .font(Theme.valueFont(scale: deviceScale))
+                .hidden()
+            Text("—")
+                .font(Theme.valueFont(scale: deviceScale))
+                .hidden()
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(event.accessibilityLabel)
     }
 }
 
@@ -721,6 +847,9 @@ private struct StripColumn<Content: View>: View {
                     .frame(width: 16 * deviceScale, height: 7 * deviceScale)
             }
             .opacity(isActive ? 1 : 0)
+            // A quick cross-fade when the marker moves — on the 7-day strip it follows
+            // the hourly strip's swiping from one day to the next.
+            .animation(.easeInOut(duration: 0.2), value: isActive)
 
             VStack(spacing: 7 * deviceScale) {
                 content

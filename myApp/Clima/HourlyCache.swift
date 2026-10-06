@@ -8,7 +8,7 @@ import Foundation
 /// Remembers each hour on the hourly strip from one fetch to the next, so an hour a
 /// service can't fill any more still shows what it last said.
 ///
-/// Now that the strip starts at the current hour, both services normally fill every
+/// Now that the strip starts at the next hour, both services normally fill every
 /// hour themselves, so this is just a fallback for an hour a forecast comes back without.
 ///
 /// Each service gets its own, so switching sources never shows one service's hours
