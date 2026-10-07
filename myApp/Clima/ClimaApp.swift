@@ -17,6 +17,11 @@ struct ClimaApp: App {
     /// `CLLocationManager` and the geocoded Simulator ZIP it has cached.
     @State private var weatherService = WeatherSourceSwitch()
 
+    init() {
+        // So the Settings page shows a tick on the source in use from the first launch.
+        WeatherSource.saveDefaultIfMissing()
+    }
+
     var body: some Scene {
         WindowGroup {
             // The one place the app actually measures the screen it's running on.

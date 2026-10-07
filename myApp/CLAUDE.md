@@ -40,3 +40,5 @@ I'm not a professional software developer — basic coding background, using Cla
 - Widgets / Live Activities
 - watchOS companion
 - Location search (current location only for v1)
+
+- Don't add a Co-Authored-By line to commit messages.

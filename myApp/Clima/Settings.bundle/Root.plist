@@ -17,7 +17,7 @@
 			<string>newService</string>
 			<key>Values</key>
 			<array>
-				<string>Weather Channel</string>
+				<string>newService</string>
 				<string>weatherKit</string>
 			</array>
 			<key>Titles</key>

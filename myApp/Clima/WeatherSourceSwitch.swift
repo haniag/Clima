@@ -25,6 +25,19 @@ enum WeatherSource: String {
     static var current: WeatherSource {
         UserDefaults.standard.string(forKey: key).flatMap(WeatherSource.init(rawValue:)) ?? .default
     }
+
+    /// Writes the default into `UserDefaults` when nothing usable is stored there, so the
+    /// Settings page has a value to put its checkmark on. Settings can't be relied on to
+    /// tick `DefaultValue` by itself — until the app stores something, the list can show
+    /// with no option ticked. Also replaces a stored value that matches no option, such
+    /// as "Weather Channel" from an earlier build whose Settings page saved the label
+    /// instead of the raw value. Called once at launch.
+    static func saveDefaultIfMissing() {
+        let stored = UserDefaults.standard.string(forKey: key)
+        if stored.flatMap(WeatherSource.init(rawValue:)) == nil {
+            UserDefaults.standard.set(WeatherSource.default.rawValue, forKey: key)
+        }
+    }
 }
 
 /// Decides which weather service answers: the new one, or WeatherKit. The choice is made
