@@ -520,7 +520,7 @@ struct WeatherDialScreen: View {
             .scrollPosition(id: $hourlyScrollPosition, anchor: .leading)
             // Which column is under the pinned marker, read continuously while the strip
             // moves, so the 7-day marker follows mid-swipe — see `markedDay`. It's the
-            // column nearest the marker: tomorrow's 12AM counts once it's swiped more
+            // column nearest the marker: tomorrow's 00 counts once it's swiped more
             // than halfway under it, and stops counting once it's swiped back out.
             //
             // Every column is the same width, so the content's width shared out between
@@ -550,7 +550,7 @@ struct WeatherDialScreen: View {
     }
 
     /// The day the 7-day strip marks: the day of the column under the hourly strip's
-    /// pinned marker. Swiping tomorrow's 12AM under the marker moves the 7-day marker
+    /// pinned marker. Swiping tomorrow's 00 under the marker moves the 7-day marker
     /// below onto tomorrow, and swiping it back out brings the marker home.
     private var markedDay: Date {
         let items = visibleStripItems
@@ -651,7 +651,7 @@ private let baseStripContentWidth: CGFloat = 41
 /// one number, so the two can't drift apart.
 private let baseStripCornerRadius: CGFloat = 18
 
-/// One column in the 7-day strip: weekday letter, condition icon, high, low, and the
+/// One column in the 7-day strip: weekday name, condition icon, high, low, and the
 /// chance of precipitation.
 private struct ForecastDayColumn: View {
     let day: DailyForecast
@@ -664,7 +664,7 @@ private struct ForecastDayColumn: View {
 
     var body: some View {
         StripColumn(isActive: isMarked) {
-            Text(day.dayLetter)
+            Text(day.dayLabel)
                 .climaCaps(.heading)
                 .foregroundStyle(Theme.panelInk)
 
@@ -727,7 +727,7 @@ private struct HourlyColumn: View {
         // Never active: the hourly strip's marker is pinned to the panel, not carried by
         // a column — see `hourlyStrip`. The column still keeps the marker's slot clear.
         StripColumn(isActive: false) {
-            // Midnight is "12AM" like any other hour; the 7-day strip's marker is what
+            // Midnight is "00" like any other hour; the 7-day strip's marker is what
             // says which day the strip has reached.
             Text(hour.timeLabel)
                 .climaCaps(.heading)

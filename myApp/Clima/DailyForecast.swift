@@ -9,7 +9,7 @@ import Foundation
 struct DailyForecast: Identifiable {
     let id = UUID()
     /// The one value that's always known. A date needs no network and no permission, so
-    /// the strip can lay out its seven columns with the right weekday letters even when
+    /// the strip can lay out its seven columns with the right weekday names even when
     /// there's nothing to put in them yet.
     let date: Date
 
@@ -23,11 +23,10 @@ struct DailyForecast: Identifiable {
     /// Chance of rain, snow, etc. at some point in the day, as a whole percent (0–100).
     let precipitationChance: Int?
 
-    /// Single-letter weekday label, e.g. "M" for Monday. A few letters repeat
-    /// (Tue/Thu, Sat/Sun) since it's the first letter, not a unique abbreviation.
-    var dayLetter: String {
+    /// Three-letter weekday label, e.g. "Mon" (shown uppercase on the strip).
+    var dayLabel: String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "EEEEE"
+        formatter.dateFormat = "EEE"
         return formatter.string(from: date)
     }
 }

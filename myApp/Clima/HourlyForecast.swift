@@ -23,19 +23,17 @@ struct SunEvent: Hashable {
         kind == .sunrise ? "sunrise" : "sunset"
     }
 
-    /// The time to the minute without AM/PM, e.g. "7:01" — the hour columns either side
-    /// already say which half of the day it is, and the column is too narrow for "7:01AM".
+    /// The time to the minute on the 24-hour clock, e.g. "07:01" or "19:42".
     var timeLabel: String {
         let calendar = Calendar.current
         let hour = calendar.component(.hour, from: date)
         let minute = calendar.component(.minute, from: date)
-        let displayHour = hour % 12 == 0 ? 12 : hour % 12
-        return "\(displayHour):" + String(format: "%02d", minute)
+        return String(format: "%02d:%02d", hour, minute)
     }
 
     /// What VoiceOver reads, since the icon alone says nothing to it.
     var accessibilityLabel: String {
-        (kind == .sunrise ? "Sunrise at " : "Sunset at ") + date.formatted(date: .omitted, time: .shortened)
+        (kind == .sunrise ? "Sunrise at " : "Sunset at ") + timeLabel
     }
 }
 
@@ -53,13 +51,11 @@ struct HourlyForecast: Identifiable {
     /// Chance of rain, snow, etc. during the hour, as a whole percent (0–100).
     let precipitationChance: Int?
 
-    /// Compact time label, e.g. "6AM", "12PM" — a fixed short form (not DateFormatter's
-    /// localized "6 AM") so the columns stay narrow.
+    /// Compact 24-hour label, e.g. "06", "13", "00" — just the hour, without ":00", so
+    /// the columns stay narrow. The sunrise/sunset columns carry the minutes.
     var timeLabel: String {
         let hour = Calendar.current.component(.hour, from: date)
-        let displayHour = hour % 12 == 0 ? 12 : hour % 12
-        let period = hour < 12 ? "AM" : "PM"
-        return "\(displayHour)\(period)"
+        return String(format: "%02d", hour)
     }
 
 }

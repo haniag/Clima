@@ -84,8 +84,9 @@ final class NewWeatherService: WeatherProviding {
         return WeatherSnapshot(
             condition: condition,
             temperature: temperature,
-            // The service's own words when it sent some; our label for the slot otherwise.
-            conditionLabel: observation.wxPhraseShort ?? condition.label,
+            // The service's own words when it sent some — the long phrase, since the short
+            // one abbreviates ("P Cloudy") — and our label for the slot otherwise.
+            conditionLabel: observation.wxPhraseLong ?? observation.wxPhraseShort ?? condition.label,
             humidity: observation.relativeHumidity.map { Int($0.rounded()) },
             precipitationLastHour: observation.precip1Hour,
             daily: forecast.map { Self.dailyForecasts(from: $0, today: fetchedAt) }
@@ -303,6 +304,9 @@ nonisolated private struct CurrentObservation: Decodable {
     let relativeHumidity: Double?
     /// Inches in the last hour, because the request asks for `units=e`.
     let precip1Hour: Double?
+    /// The condition in full, e.g. "Partly Cloudy".
+    let wxPhraseLong: String?
+    /// The same, abbreviated to fit a small space, e.g. "P Cloudy". Only a fallback.
     let wxPhraseShort: String?
     /// Today's sunrise and sunset, as local time with its UTC offset, e.g.
     /// `"2026-09-25T07:00:23-0400"`. Optional, so a reading still decodes without them —
