@@ -39,7 +39,7 @@ final class NewWeatherService: WeatherProviding {
     ///
     /// Also still to be decided. While it's nil the hourly strip shows dashes.
     //static let hourlyForecastURL: URL? = nil
-    static let hourlyForecastURL: URL? = URL(string: "https://api.weather.com/v3/wx/forecast/hourly/3day")
+    static let hourlyForecastURL: URL? = URL(string: "https://api.weather.com/v3/wx/forecast/hourly/15day")
     
     
 
@@ -260,8 +260,9 @@ final class NewWeatherService: WeatherProviding {
         return url
     }
 
-    /// Every hour the forecast sends from the next one on — the whole of it, so the
-    /// strip is as long as the endpoint's forecast (72 hours for the 3-day one).
+    /// Every hour the forecast sends from the next one on, up to the end of the 7-day
+    /// strip's last day — see `HourlyForecast.stripEnd`. The endpoint sends fifteen days;
+    /// the rest are dropped.
     ///
     /// Each hour carries its own time from `validTimeUtc`, so its column is labelled by
     /// that, not by where it sits in the list. The hour we're in is left out: the dial
@@ -270,9 +271,10 @@ final class NewWeatherService: WeatherProviding {
     private static func hourlyForecasts(from forecast: HourlyForecastResponse?, at date: Date) -> [HourlyForecast] {
         guard let forecast else { return .placeholder(from: date) }
         let start = [HourlyForecast].stripStart(after: date)
+        let end = [HourlyForecast].stripEnd(after: date)
         let hours = forecast.validTimeUtc.indices.compactMap { index -> HourlyForecast? in
             let hourDate = Date(timeIntervalSince1970: forecast.validTimeUtc[index])
-            guard hourDate >= start else { return nil }
+            guard hourDate >= start, hourDate < end else { return nil }
             return HourlyForecast(
                 date: hourDate,
                 // Night codes keep their moon here: an hour, unlike a day, is either one.

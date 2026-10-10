@@ -70,21 +70,30 @@ extension Array where Element == HourlyForecast {
         return calendar.date(byAdding: .hour, value: 1, to: thisHour) ?? thisHour
     }
 
-    /// How many hours the strip shows when it's filled from WeatherKit, or has no forecast
-    /// at all: 72, the same three days the new service's hourly endpoint sends. With the
-    /// new service, the strip is however many hours it actually sent.
-    static let stripLength = 72
+    /// Where the strip ends: midnight after the 7-day strip's last day. The hours cover
+    /// the same seven days as the strip below them, so every day there has its hours to
+    /// jump to — and no more, even though the new service's endpoint sends fifteen days.
+    /// The hour starting here is the first one left off.
+    static func stripEnd(after date: Date) -> Date {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: date)
+        return calendar.date(byAdding: .day, value: 7, to: today) ?? today
+    }
 
-    /// `stripLength` hours from `stripStart`, with no weather against them — what the
-    /// strip shows before there's a forecast, or when a service didn't send one.
+    /// Every hour from `stripStart` up to `stripEnd`, with no weather against them — what
+    /// the strip shows before there's a forecast, or when a service didn't send one.
     static func placeholder(from now: Date = Date()) -> [HourlyForecast] {
         let calendar = Calendar.current
         let start = Self.stripStart(after: now)
-        return (0..<stripLength).compactMap { offset in
-            calendar.date(byAdding: .hour, value: offset, to: start).map {
-                HourlyForecast(date: $0, condition: nil, temperature: nil, precipitationChance: nil)
-            }
+        let end = Self.stripEnd(after: now)
+        var hours: [HourlyForecast] = []
+        var date = start
+        while date < end {
+            hours.append(HourlyForecast(date: date, condition: nil, temperature: nil, precipitationChance: nil))
+            guard let next = calendar.date(byAdding: .hour, value: 1, to: date) else { break }
+            date = next
         }
+        return hours
     }
 
     /// Made-up but plausible data, for previews only — the running app no longer reads it.
@@ -107,12 +116,12 @@ extension Array where Element == HourlyForecast {
 }
 
 extension [SunEvent] {
-    /// Sunrise at 7:01 and sunset at 6:58 for today and the next three days, to go with
+    /// Sunrise at 7:01 and sunset at 6:58 for today and the six days after it, to go with
     /// `[HourlyForecast].sample`, whose sun gives way to moons at 7PM. Previews only.
     static let sample: [SunEvent] = {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
-        return (0...3).flatMap { day -> [SunEvent] in
+        return (0..<7).flatMap { day -> [SunEvent] in
             let start = calendar.date(byAdding: .day, value: day, to: today) ?? today
             return [
                 SunEvent(kind: .sunrise, date: start.addingTimeInterval((7 * 60 + 1) * 60)),

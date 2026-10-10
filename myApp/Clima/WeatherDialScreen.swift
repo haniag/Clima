@@ -238,7 +238,8 @@ struct WeatherDialScreen: View {
                         ForEach(snapshot?.daily ?? .placeholder()) { day in
                             ForecastDayColumn(
                                 day: day,
-                                isMarked: Calendar.current.isDate(day.date, inSameDayAs: marked)
+                                isMarked: Calendar.current.isDate(day.date, inSameDayAs: marked),
+                                onSelect: { showHours(for: day.date) }
                             )
                         }
                     }
@@ -549,6 +550,30 @@ struct WeatherDialScreen: View {
         hourlyScrollPosition = visibleStripItems.first?.id
     }
 
+    /// Swipes the hourly strip to `day`, for a tap on its column in the 7-day strip: the
+    /// day's sunrise lands under the pinned marker, and the 7-day marker follows on its
+    /// own, the same as if the hours had been swiped there by hand.
+    ///
+    /// Today's sunrise is often already gone, and a day near the poles may have none; then
+    /// it's the day's first column instead — for today, the strip's start. A day the hours
+    /// don't reach leaves the strip where it is.
+    private func showHours(for day: Date) {
+        let calendar = Calendar.current
+        let items = visibleStripItems
+        let dayItems = items.filter { calendar.isDate($0.id.date, inSameDayAs: day) }
+        let sunrise = dayItems.first { item in
+            if case .sun(let event) = item, event.kind == .sunrise { return true }
+            return false
+        }
+        // Late enough tonight, the strip already starts on tomorrow, so today has no
+        // columns left; tapping it still brings the strip home.
+        let fallback = calendar.isDateInToday(day) ? items.first : nil
+        guard let target = sunrise ?? dayItems.first ?? fallback else { return }
+        withAnimation(.easeInOut(duration: 0.4)) {
+            hourlyScrollPosition = target.id
+        }
+    }
+
     /// The day the 7-day strip marks: the day of the column under the hourly strip's
     /// pinned marker. Swiping tomorrow's 00 under the marker moves the 7-day marker
     /// below onto tomorrow, and swiping it back out brings the marker home.
@@ -658,11 +683,23 @@ private struct ForecastDayColumn: View {
     /// Whether this column carries the marker: the day the hourly strip above is
     /// showing — see `markedDay`. Today, until the hours are swiped into another day.
     let isMarked: Bool
+    /// Called when the column is tapped: swipes the hourly strip to this day.
+    let onSelect: () -> Void
 
     @AppStorage("useCelsius") private var useCelsius = false
     @Environment(\.deviceScale) private var deviceScale
 
     var body: some View {
+        column
+            // The whole column is the target, gaps between its rows included.
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onSelect)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint("Shows this day's hours")
+    }
+
+    private var column: some View {
         StripColumn(isActive: isMarked) {
             Text(day.dayLabel)
                 .climaCaps(.heading)

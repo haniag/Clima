@@ -40,7 +40,7 @@ struct WeatherSnapshot {
     /// Today and the six days after it, for the upper strip.
     let daily: [DailyForecast]
     /// Every hour of the forecast from the next one on, one each, for the lower strip —
-    /// see `HourlyForecast.stripStart`/`stripLength`.
+    /// see `HourlyForecast.stripStart`/`stripEnd`.
     ///
     /// A `var`, unlike the rest, so `WeatherSourceSwitch` can fill its gaps from
     /// `HourlyCache` after the service has answered.
@@ -170,17 +170,16 @@ final class WeatherService: WeatherProviding {
         // dial disagreeing with the strip directly under it.
         //
         // The hours are asked for by date: WeatherKit's default hourly range is only about
-        // a day. The end is `stripLength` hours after the strip's first column, so the
-        // strip's last column is the last hour inside the range. The start is the hour
+        // a day. The end is `stripEnd` — midnight after the 7-day strip's last day — so
+        // the strip's last column is the last hour inside the range. The start is the hour
         // just finished — two before the strip's first column. Neither it nor the hour
         // we're in is on the strip, but the finished one is where
         // `precipitationLastHour` reads from.
         let now = Date()
         let calendar = Calendar.current
         let thisHour = calendar.dateInterval(of: .hour, for: now)?.start ?? now
-        let stripStart = [HourlyForecast].stripStart(after: now)
         let hoursStart = calendar.date(byAdding: .hour, value: -1, to: thisHour) ?? thisHour
-        let hoursEnd = calendar.date(byAdding: .hour, value: [HourlyForecast].stripLength, to: stripStart) ?? stripStart
+        let hoursEnd = [HourlyForecast].stripEnd(after: now)
         let (current, daily, hourly) = try await weatherKit.weather(
             for: location,
             including: .current, .daily,
@@ -262,7 +261,8 @@ final class WeatherService: WeatherProviding {
         return WeatherCondition(weatherKitCondition: day.condition, isDaylight: true)
     }
 
-    /// The next `stripLength` hours (72) — see `HourlyForecast.stripStart`.
+    /// Every hour from the next one to the end of the 7-day strip's last day — see
+    /// `HourlyForecast.stripStart` and `stripEnd`.
     ///
     /// Slot-first for the same reason as the days above. The request covers all of these
     /// hours, so normally every one has a reading to show; where the forecast doesn't
