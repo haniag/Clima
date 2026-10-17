@@ -10,3 +10,7 @@ The app was designed based on privacy in mind, as most commerical weather apps c
 
 <img width="563" height="1218" alt="IMG_3195" src="https://github.com/user-attachments/assets/1c2de133-b217-4ebd-930c-9c99004b408e" />
 <img width="563" height="1218" alt="IMG_3194" src="https://github.com/user-attachments/assets/0b22df82-9cac-402e-91d5-94a044eaa0b2" />
+
+Copyright © 2026 Hani Abughazaleh. All rights reserved.
+
+This code is shared for viewing purposes only. No permission is granted to use, copy, modify, distribute, or create derivative works from it.
