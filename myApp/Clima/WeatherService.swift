@@ -54,6 +54,12 @@ struct WeatherSnapshot {
     /// lookup isn't set up or didn't answer. See `LocationNameService`.
     let locationName: String?
 
+    /// The time zone of the place the reading is for. Every day and hour in it — the
+    /// strips' columns, their labels, sunrise and sunset times — is counted and shown in
+    /// this zone, so a place chosen on the other side of the world reads by its own
+    /// clocks, not the phone's.
+    let timeZone: TimeZone
+
     /// When this reading was taken.
     ///
     /// Carried on the reading rather than tracked beside it, because it describes THIS
@@ -159,10 +165,22 @@ final class WeatherService: WeatherProviding {
     }
 
     private func fetchSnapshot() async throws -> WeatherSnapshot {
-        let location = try await locationProvider.currentLocation()
+        // A place picked in the search sheet wins over the phone's own location — and
+        // needs no permission or fix, since its coordinates came with it.
+        let place = ChosenPlace.saved
+        let location: CLLocation
+        if let place {
+            location = place.location
+        } else {
+            location = try await locationProvider.currentLocation()
+        }
 
         // Started first so it runs while WeatherKit is answering, rather than after.
-        async let locationName = LocationNameService.name(for: location)
+        async let locationName = Self.name(of: place, at: location)
+
+        // Where the days and hours are counted: the chosen place's own clock, or — for the
+        // current location — the phone's, since the phone is there.
+        let timeZone = place?.timeZone ?? .current
 
         // All three datasets in ONE call. WeatherKit's variadic overload fetches them
         // together, so the dial and both strips are guaranteed to describe the same
@@ -176,10 +194,10 @@ final class WeatherService: WeatherProviding {
         // we're in is on the strip, but the finished one is where
         // `precipitationLastHour` reads from.
         let now = Date()
-        let calendar = Calendar.current
+        let calendar = Calendar.local(to: timeZone)
         let thisHour = calendar.dateInterval(of: .hour, for: now)?.start ?? now
         let hoursStart = calendar.date(byAdding: .hour, value: -1, to: thisHour) ?? thisHour
-        let hoursEnd = [HourlyForecast].stripEnd(after: now)
+        let hoursEnd = [HourlyForecast].stripEnd(after: now, in: timeZone)
         let (current, daily, hourly) = try await weatherKit.weather(
             for: location,
             including: .current, .daily,
@@ -195,15 +213,25 @@ final class WeatherService: WeatherProviding {
             conditionLabel: condition.label,
             // WeatherKit gives 0.0–1.0; the readout shows a whole percent.
             humidity: Int((current.humidity * 100).rounded()),
-            precipitationLastHour: Self.precipitationLastHour(from: hourly),
-            daily: Self.dailyForecasts(from: daily),
-            hourly: Self.hourlyForecasts(from: hourly),
+            precipitationLastHour: Self.precipitationLastHour(from: hourly, in: timeZone),
+            daily: Self.dailyForecasts(from: daily, in: timeZone),
+            hourly: Self.hourlyForecasts(from: hourly, in: timeZone),
             sunEvents: Self.sunEvents(from: daily),
             locationName: await locationName,
+            timeZone: timeZone,
             // Stamped when the answer lands, not when the request left, so the time on
             // screen is the age of the data rather than the age of the attempt.
             fetchedAt: Date()
         )
+    }
+
+    /// The header's name for where the reading is: a chosen place already has one from
+    /// the search; the current location is looked up.
+    private static func name(of place: ChosenPlace?, at location: CLLocation) async -> String? {
+        if let place {
+            return place.name
+        }
+        return await LocationNameService.name(for: location)
     }
 
     // MARK: - WeatherKit's shapes, turned into ours
@@ -221,10 +249,12 @@ final class WeatherService: WeatherProviding {
     ///
     /// Today after its sunset is the one column that shows a night icon — see
     /// `condition(for:isToday:at:)`.
-    private static func dailyForecasts(from forecast: Forecast<DayWeather>) -> [DailyForecast] {
-        let calendar = Calendar.current
+    ///
+    /// Days run midnight to midnight in `timeZone`, the place the weather is for.
+    private static func dailyForecasts(from forecast: Forecast<DayWeather>, in timeZone: TimeZone) -> [DailyForecast] {
+        let calendar = Calendar.local(to: timeZone)
         let now = Date()
-        let today = [DailyForecast].stripStart(containing: now)
+        let today = [DailyForecast].stripStart(containing: now, in: timeZone)
 
         return (0..<7).map { offset in
             let date = calendar.date(byAdding: .day, value: offset, to: today) ?? today
@@ -234,8 +264,9 @@ final class WeatherService: WeatherProviding {
                 )
             }
             // Our own `date`, not `day.date`: the column's position on the strip is what
-            // the slot decided, and a WeatherKit day begins in the forecast location's
-            // time zone, which needn't agree with the phone's about which day it is.
+            // the slot decided. (A WeatherKit day begins at midnight in the forecast
+            // location's time zone — the same midnight as the slot's, now that the slots
+            // are counted in it too.)
             return DailyForecast(
                 date: date,
                 condition: condition(for: day, isToday: offset == 0, at: now),
@@ -268,10 +299,10 @@ final class WeatherService: WeatherProviding {
     /// hours, so normally every one has a reading to show; where the forecast doesn't
     /// reach, that one hour is left for
     /// `HourlyCache` to fill, or renders dashes, and the rest stay exactly where they were.
-    private static func hourlyForecasts(from forecast: Forecast<HourWeather>) -> [HourlyForecast] {
-        let calendar = Calendar.current
+    private static func hourlyForecasts(from forecast: Forecast<HourWeather>, in timeZone: TimeZone) -> [HourlyForecast] {
+        let calendar = Calendar.local(to: timeZone)
 
-        return [HourlyForecast].placeholder(from: Date()).map { slot in
+        return [HourlyForecast].placeholder(from: Date(), in: timeZone).map { slot in
             guard let hour = forecast.first(
                 where: { calendar.isDate($0.date, equalTo: slot.date, toGranularity: .hour) }
             ) else {
@@ -306,8 +337,8 @@ final class WeatherService: WeatherProviding {
     /// moment a shower stops; the hourly forecast is asked for from an hour before the
     /// strip starts, so the hour just finished is in there with its total. Nil if it's
     /// missing anyway.
-    private static func precipitationLastHour(from forecast: Forecast<HourWeather>) -> Double? {
-        let calendar = Calendar.current
+    private static func precipitationLastHour(from forecast: Forecast<HourWeather>, in timeZone: TimeZone) -> Double? {
+        let calendar = Calendar.local(to: timeZone)
         guard let thisHour = calendar.dateInterval(of: .hour, for: Date())?.start,
               let lastHour = calendar.date(byAdding: .hour, value: -1, to: thisHour),
               let hour = forecast.first(where: {
@@ -345,6 +376,7 @@ struct PreviewWeatherService: WeatherProviding {
     var hourly: [HourlyForecast] = .sample
     var sunEvents: [SunEvent] = .sample
     var locationName: String? = "Centreville"
+    var timeZone: TimeZone = .current
     /// Set this to make every fetch fail instead of answering.
     var error: Error?
     /// How long to stall before answering, for a look at the loading state. Not subject to
@@ -372,6 +404,7 @@ struct PreviewWeatherService: WeatherProviding {
             hourly: hourly,
             sunEvents: sunEvents,
             locationName: locationName,
+            timeZone: timeZone,
             fetchedAt: fetchedAt
         )
     }

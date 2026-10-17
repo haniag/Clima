@@ -94,6 +94,9 @@ final class NewWeatherService: WeatherProviding {
             hourly: Self.hourlyForecasts(from: hourly, at: fetchedAt),
             sunEvents: Self.sunEvents(today: observation, later: forecast),
             locationName: await locationName,
+            // The phone's: this service only reads the current location so far, and the
+            // phone is there. (It ignores `ChosenPlace` until it's taught to use it.)
+            timeZone: .current,
             fetchedAt: fetchedAt
         )
     }

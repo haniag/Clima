@@ -63,6 +63,9 @@ struct WeatherDialScreen: View {
     /// once the strip stops. Drives the 7-day strip's marker; see `markedDay`.
     @State private var hourlyMarkedIndex = 0
 
+    /// Whether the location search sheet is open — see the header's arrow.
+    @State private var isSearchingLocation = false
+
     /// The appearance actually on screen. With no override this is the phone's, since
     /// `.preferredColorScheme(nil)` below leaves the system's choice in place.
     @Environment(\.colorScheme) private var colorScheme
@@ -139,6 +142,17 @@ struct WeatherDialScreen: View {
         // late.
         .onChange(of: weatherSource) {
             Task { await load() }
+        }
+        .sheet(isPresented: $isSearchingLocation) {
+            LocationSearchSheet(current: ChosenPlace.saved) { place in
+                ChosenPlace.choose(place)
+                // `load()` for the same reason as a change of source: the new place's
+                // weather should replace whatever is on screen or on its way.
+                Task { await load() }
+            }
+            // The sheet is a window of its own, so the Light/Dark switch has to reach it
+            // separately.
+            .preferredColorScheme(darkModeOverride.map { $0 ? .dark : .light })
         }
     }
 
@@ -235,10 +249,10 @@ struct WeatherDialScreen: View {
                         // Worked out once here rather than per column: it rebuilds the
                         // hourly strip's list of columns to find the one under its marker.
                         let marked = markedDay
-                        ForEach(snapshot?.daily ?? .placeholder()) { day in
+                        ForEach(snapshot?.daily ?? .placeholder(in: timeZone)) { day in
                             ForecastDayColumn(
                                 day: day,
-                                isMarked: Calendar.current.isDate(day.date, inSameDayAs: marked),
+                                isMarked: calendar.isDate(day.date, inSameDayAs: marked),
                                 onSelect: { showHours(for: day.date) }
                             )
                         }
@@ -262,6 +276,20 @@ struct WeatherDialScreen: View {
         // Only scroll when the content genuinely doesn't fit: on a large phone the page
         // should sit still, not bounce.
         .scrollBounceBehavior(.basedOnSize)
+        // SwiftUI's own setting, read by the forecast columns for their labels — see
+        // `timeZone` below.
+        .environment(\.timeZone, timeZone)
+    }
+
+    /// The time zone the strips count and label their days and hours in: the reading's
+    /// place's, or the phone's before there's a reading.
+    private var timeZone: TimeZone {
+        snapshot?.timeZone ?? .current
+    }
+
+    /// The calendar in that time zone.
+    private var calendar: Calendar {
+        Calendar.local(to: timeZone)
     }
 
     // MARK: - Header
@@ -273,10 +301,36 @@ struct WeatherDialScreen: View {
             // nothing, so the header keeps its height and nothing below it jumps when the
             // name arrives. One line, cut short with an ellipsis, so a long place name
             // can't push the "Updated" time onto a second line.
-            Text(snapshot?.locationName ?? " ")
-                .climaCaps(.caption, bold: true)
-                .foregroundStyle(Theme.ink)
-                .lineLimit(1)
+            //
+            // With the arrow after it, the name is also the way to another place's
+            // weather: the two together are one button, so a tap on either opens the
+            // search. WeatherKit only for now — the new service doesn't read
+            // `ChosenPlace` yet, so offering the choice there would pick a place and then
+            // go on showing the weather where the phone is.
+            if weatherSource == .weatherKit {
+                Button {
+                    isSearchingLocation = true
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 8 * deviceScale) {
+                        locationName
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: Theme.captionSize * deviceScale, weight: .semibold))
+                            .foregroundStyle(Theme.inkMuted)
+                    }
+                    // A finger-sized target without a taller header: the padding widens
+                    // what can be tapped, and the negative padding after it takes the
+                    // same room back out of the layout.
+                    .padding(.vertical, 12 * deviceScale)
+                    .padding(.trailing, 16 * deviceScale)
+                    .contentShape(Rectangle())
+                    .padding(.vertical, -12 * deviceScale)
+                    .padding(.trailing, -16 * deviceScale)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Choose another location")
+            } else {
+                locationName
+            }
 
             Spacer()
 
@@ -295,6 +349,14 @@ struct WeatherDialScreen: View {
                     .foregroundStyle(Theme.inkMuted)
             }
         }
+    }
+
+    /// The header's place name — see `header`.
+    private var locationName: some View {
+        Text(snapshot?.locationName ?? " ")
+            .climaCaps(.caption, bold: true)
+            .foregroundStyle(Theme.ink)
+            .lineLimit(1)
     }
 
     /// How far past the page's normal `Theme.gutter` margin the canopy is allowed to
@@ -384,6 +446,9 @@ struct WeatherDialScreen: View {
     /// The day is added once the reading is no longer from today — which happens if the
     /// app is left open overnight — because a bare "04:15" on a reading twelve hours old
     /// looks exactly like one from four minutes ago.
+    ///
+    /// On the phone's clock, unlike the strips: it says how fresh the reading is, which
+    /// is a question about the reader's own time, wherever the weather is for.
     private var updatedLabel: String? {
         guard let snapshot else { return nil }
 
@@ -558,7 +623,6 @@ struct WeatherDialScreen: View {
     /// it's the day's first column instead — for today, the strip's start. A day the hours
     /// don't reach leaves the strip where it is.
     private func showHours(for day: Date) {
-        let calendar = Calendar.current
         let items = visibleStripItems
         let dayItems = items.filter { calendar.isDate($0.id.date, inSameDayAs: day) }
         let sunrise = dayItems.first { item in
@@ -594,11 +658,11 @@ struct WeatherDialScreen: View {
     /// hour column.
     private var visibleStripItems: [HourlyStripItem] {
         let now = Date()
-        let firstHour = [HourlyForecast].stripStart(after: now)
-        var hours = (snapshot?.hourly ?? .placeholder()).filter { $0.date >= firstHour }
+        let firstHour = [HourlyForecast].stripStart(after: now, in: timeZone)
+        var hours = (snapshot?.hourly ?? .placeholder(in: timeZone)).filter { $0.date >= firstHour }
         // A reading so old that none of its hours are left: show empty slots instead.
         if hours.isEmpty {
-            hours = .placeholder()
+            hours = .placeholder(in: timeZone)
         }
         let lastHour = hours.last?.date ?? firstHour
         let sunEvents = (snapshot?.sunEvents ?? []).filter { $0.date > now && $0.date < lastHour }
@@ -688,6 +752,8 @@ private struct ForecastDayColumn: View {
 
     @AppStorage("useCelsius") private var useCelsius = false
     @Environment(\.deviceScale) private var deviceScale
+    /// The place the weather is for — see `WeatherDialScreen.timeZone`.
+    @Environment(\.timeZone) private var timeZone
 
     var body: some View {
         column
@@ -701,7 +767,7 @@ private struct ForecastDayColumn: View {
 
     private var column: some View {
         StripColumn(isActive: isMarked) {
-            Text(day.dayLabel)
+            Text(day.dayLabel(in: timeZone))
                 .climaCaps(.heading)
                 .foregroundStyle(Theme.panelInk)
 
@@ -759,6 +825,8 @@ private struct HourlyColumn: View {
 
     @AppStorage("useCelsius") private var useCelsius = false
     @Environment(\.deviceScale) private var deviceScale
+    /// The place the weather is for — see `WeatherDialScreen.timeZone`.
+    @Environment(\.timeZone) private var timeZone
 
     var body: some View {
         // Never active: the hourly strip's marker is pinned to the panel, not carried by
@@ -766,7 +834,7 @@ private struct HourlyColumn: View {
         StripColumn(isActive: false) {
             // Midnight is "00" like any other hour; the 7-day strip's marker is what
             // says which day the strip has reached.
-            Text(hour.timeLabel)
+            Text(hour.timeLabel(in: timeZone))
                 .climaCaps(.heading)
                 .foregroundStyle(Theme.panelInk)
 
@@ -841,11 +909,13 @@ private struct SunEventColumn: View {
     let event: SunEvent
 
     @Environment(\.deviceScale) private var deviceScale
+    /// The place the weather is for — see `WeatherDialScreen.timeZone`.
+    @Environment(\.timeZone) private var timeZone
 
     var body: some View {
         // Never active, the same as `HourlyColumn`.
         StripColumn(isActive: false) {
-            Text(event.timeLabel)
+            Text(event.timeLabel(in: timeZone))
                 .climaCaps(.heading)
                 .foregroundStyle(Theme.panelInk)
 
@@ -868,7 +938,7 @@ private struct SunEventColumn: View {
                 .hidden()
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(event.accessibilityLabel)
+        .accessibilityLabel(event.accessibilityLabel(in: timeZone))
     }
 }
 

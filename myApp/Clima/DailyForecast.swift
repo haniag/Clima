@@ -23,10 +23,12 @@ struct DailyForecast: Identifiable {
     /// Chance of rain, snow, etc. at some point in the day, as a whole percent (0–100).
     let precipitationChance: Int?
 
-    /// Three-letter weekday label, e.g. "Mon" (shown uppercase on the strip).
-    var dayLabel: String {
+    /// Three-letter weekday label, e.g. "Mon" (shown uppercase on the strip), for the day
+    /// as it is in `timeZone` — the place the weather is for.
+    func dayLabel(in timeZone: TimeZone) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEE"
+        formatter.timeZone = timeZone
         return formatter.string(from: date)
     }
 }
@@ -39,8 +41,11 @@ extension Array where Element == DailyForecast {
     /// keeps every column inside what WeatherKit's daily forecast covers, which starts at
     /// today as well — there's no day on the strip that's already over and so has no
     /// forecast left to show.
-    static func stripStart(containing date: Date) -> Date {
-        Calendar.current.startOfDay(for: date)
+    ///
+    /// Midnight in `timeZone`, the place the weather is for: with Paris chosen, the strip
+    /// starts on Paris's today, which may already be the phone's tomorrow.
+    static func stripStart(containing date: Date, in timeZone: TimeZone = .current) -> Date {
+        Calendar.local(to: timeZone).startOfDay(for: date)
     }
 
     /// Today and the six days after it with no weather against them: what the strip
@@ -49,9 +54,9 @@ extension Array where Element == DailyForecast {
     ///
     /// Built fresh on each call rather than stored in a `let`, since today moves and a
     /// constant computed at launch would still be starting on yesterday come midnight.
-    static func placeholder(from today: Date = Date()) -> [DailyForecast] {
-        let calendar = Calendar.current
-        let start = Self.stripStart(containing: today)
+    static func placeholder(from today: Date = Date(), in timeZone: TimeZone = .current) -> [DailyForecast] {
+        let calendar = Calendar.local(to: timeZone)
+        let start = Self.stripStart(containing: today, in: timeZone)
         return (0..<7).map { offset in
             DailyForecast(
                 date: calendar.date(byAdding: .day, value: offset, to: start) ?? start,

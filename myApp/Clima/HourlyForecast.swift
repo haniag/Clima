@@ -23,17 +23,18 @@ struct SunEvent: Hashable {
         kind == .sunrise ? "sunrise" : "sunset"
     }
 
-    /// The time to the minute on the 24-hour clock, e.g. "07:01" or "19:42".
-    var timeLabel: String {
-        let calendar = Calendar.current
+    /// The time to the minute on the 24-hour clock, e.g. "07:01" or "19:42", as a clock
+    /// in `timeZone` — the place the weather is for — reads it.
+    func timeLabel(in timeZone: TimeZone) -> String {
+        let calendar = Calendar.local(to: timeZone)
         let hour = calendar.component(.hour, from: date)
         let minute = calendar.component(.minute, from: date)
         return String(format: "%02d:%02d", hour, minute)
     }
 
     /// What VoiceOver reads, since the icon alone says nothing to it.
-    var accessibilityLabel: String {
-        (kind == .sunrise ? "Sunrise at " : "Sunset at ") + timeLabel
+    func accessibilityLabel(in timeZone: TimeZone) -> String {
+        (kind == .sunrise ? "Sunrise at " : "Sunset at ") + timeLabel(in: timeZone)
     }
 }
 
@@ -52,9 +53,10 @@ struct HourlyForecast: Identifiable {
     let precipitationChance: Int?
 
     /// Compact 24-hour label, e.g. "06", "13", "00" — just the hour, without ":00", so
-    /// the columns stay narrow. The sunrise/sunset columns carry the minutes.
-    var timeLabel: String {
-        let hour = Calendar.current.component(.hour, from: date)
+    /// the columns stay narrow. The sunrise/sunset columns carry the minutes. In
+    /// `timeZone`, the place the weather is for.
+    func timeLabel(in timeZone: TimeZone) -> String {
+        let hour = Calendar.local(to: timeZone).component(.hour, from: date)
         return String(format: "%02d", hour)
     }
 
@@ -64,8 +66,11 @@ extension Array where Element == HourlyForecast {
     /// Where the strip begins: the start of the hour AFTER the one `date` falls in. The
     /// hour we're in is already on screen — it's what the dial shows — so the strip opens
     /// on what's coming next.
-    static func stripStart(after date: Date) -> Date {
-        let calendar = Calendar.current
+    ///
+    /// Hours are counted in `timeZone`, the place the weather is for. It matters even for
+    /// the hour: in India, say, the clock's hours start at half past the phone's.
+    static func stripStart(after date: Date, in timeZone: TimeZone = .current) -> Date {
+        let calendar = Calendar.local(to: timeZone)
         let thisHour = calendar.dateInterval(of: .hour, for: date)?.start ?? date
         return calendar.date(byAdding: .hour, value: 1, to: thisHour) ?? thisHour
     }
@@ -73,19 +78,19 @@ extension Array where Element == HourlyForecast {
     /// Where the strip ends: midnight after the 7-day strip's last day. The hours cover
     /// the same seven days as the strip below them, so every day there has its hours to
     /// jump to — and no more, even though the new service's endpoint sends fifteen days.
-    /// The hour starting here is the first one left off.
-    static func stripEnd(after date: Date) -> Date {
-        let calendar = Calendar.current
+    /// The hour starting here is the first one left off. Midnight in `timeZone`.
+    static func stripEnd(after date: Date, in timeZone: TimeZone = .current) -> Date {
+        let calendar = Calendar.local(to: timeZone)
         let today = calendar.startOfDay(for: date)
         return calendar.date(byAdding: .day, value: 7, to: today) ?? today
     }
 
     /// Every hour from `stripStart` up to `stripEnd`, with no weather against them — what
     /// the strip shows before there's a forecast, or when a service didn't send one.
-    static func placeholder(from now: Date = Date()) -> [HourlyForecast] {
-        let calendar = Calendar.current
-        let start = Self.stripStart(after: now)
-        let end = Self.stripEnd(after: now)
+    static func placeholder(from now: Date = Date(), in timeZone: TimeZone = .current) -> [HourlyForecast] {
+        let calendar = Calendar.local(to: timeZone)
+        let start = Self.stripStart(after: now, in: timeZone)
+        let end = Self.stripEnd(after: now, in: timeZone)
         var hours: [HourlyForecast] = []
         var date = start
         while date < end {
