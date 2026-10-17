@@ -3,7 +3,6 @@
 //  Clima
 //
 
-import MapKit
 import SwiftUI
 
 /// The sheet the header's arrow opens: type a place, pick it, and the screen shows its
@@ -18,9 +17,9 @@ struct LocationSearchSheet: View {
     /// itself afterwards.
     let onSelect: (ChosenPlace?) -> Void
 
-    @State private var search = LocationSearch()
+    @State private var search: LocationSearch
     /// The suggestion whose coordinates are being looked up, so its row can show that.
-    @State private var resolving: MKLocalSearchCompletion?
+    @State private var resolving: PlaceSuggestion?
     /// Set when that lookup fails, shown above the results.
     @State private var errorMessage: String?
     /// The last few places chosen, newest first — see `ChosenPlace.recents`. Copied in
@@ -29,6 +28,14 @@ struct LocationSearchSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.deviceScale) private var deviceScale
+
+    /// `source` is the weather service in use: the search is that service's own, so the
+    /// places it finds are ones it knows. See `LocationSearch`.
+    init(current: ChosenPlace?, source: WeatherSource, onSelect: @escaping (ChosenPlace?) -> Void) {
+        self.current = current
+        self.onSelect = onSelect
+        _search = State(initialValue: LocationSearch(source: source))
+    }
 
     var body: some View {
         NavigationStack {
@@ -62,7 +69,7 @@ struct LocationSearchSheet: View {
                     }
                 }
 
-                if let errorMessage {
+                if let errorMessage = errorMessage ?? (isSearching ? search.problem : nil) {
                     Section {
                         Text(errorMessage)
                             .font(Theme.valueFont(scale: deviceScale))
@@ -73,15 +80,15 @@ struct LocationSearchSheet: View {
 
                 if !search.results.isEmpty {
                     Section {
-                        ForEach(search.results, id: \.self) { completion in
-                            row(title: completion.title, subtitle: completion.subtitle,
+                        ForEach(search.results) { suggestion in
+                            row(title: suggestion.title, subtitle: suggestion.subtitle,
                                 systemImage: nil, isChosen: false,
-                                isLoading: resolving == completion) {
-                                Task { await pick(completion) }
+                                isLoading: resolving == suggestion) {
+                                Task { await pick(suggestion) }
                             }
                         }
                     }
-                } else if isSearching, !search.isWaiting {
+                } else if isSearching, !search.isWaiting, search.problem == nil {
                     Section {
                         Text("No matches")
                             .font(Theme.valueFont(scale: deviceScale))
@@ -161,15 +168,15 @@ struct LocationSearchSheet: View {
         .accessibilityAddTraits(isChosen ? .isSelected : [])
     }
 
-    /// Looks up the suggestion's coordinates and, if that works, chooses it.
-    private func pick(_ completion: MKLocalSearchCompletion) async {
-        resolving = completion
+    /// Looks up the suggestion's coordinates, if it doesn't have them yet, and chooses it.
+    private func pick(_ suggestion: PlaceSuggestion) async {
+        resolving = suggestion
         errorMessage = nil
         defer { resolving = nil }
         do {
-            choose(try await search.resolve(completion))
+            choose(try await search.resolve(suggestion))
         } catch {
-            print("Couldn't look up \(completion.title): \(error)")
+            print("Couldn't look up \(suggestion.title): \(error)")
             errorMessage = "Couldn't find that place. Try another."
         }
     }
@@ -183,6 +190,6 @@ struct LocationSearchSheet: View {
 #Preview {
     Text("Behind the sheet")
         .sheet(isPresented: .constant(true)) {
-            LocationSearchSheet(current: nil) { _ in }
+            LocationSearchSheet(current: nil, source: .weatherKit) { _ in }
         }
 }

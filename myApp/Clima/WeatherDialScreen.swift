@@ -50,8 +50,9 @@ struct WeatherDialScreen: View {
     @AppStorage("darkModeOverride") private var darkModeOverride: Bool?
 
     /// Which weather service answers. Chosen on the app's page in the iPhone's Settings
-    /// app and read by `WeatherSourceSwitch` on every fetch; the screen watches it only
-    /// to tag the header and to fetch again when it changes.
+    /// app and read by `WeatherSourceSwitch` on every fetch; the screen watches it to
+    /// fetch again when it changes, and hands it to the location search, which searches
+    /// the same service.
     @AppStorage(WeatherSource.key) private var weatherSource: WeatherSource = .default
 
     /// The column at the hourly strip's leading edge. Set to the strip's first column
@@ -144,7 +145,7 @@ struct WeatherDialScreen: View {
             Task { await load() }
         }
         .sheet(isPresented: $isSearchingLocation) {
-            LocationSearchSheet(current: ChosenPlace.saved) { place in
+            LocationSearchSheet(current: ChosenPlace.saved, source: weatherSource) { place in
                 ChosenPlace.choose(place)
                 // `load()` for the same reason as a change of source: the new place's
                 // weather should replace whatever is on screen or on its way.
@@ -304,33 +305,27 @@ struct WeatherDialScreen: View {
             //
             // With the arrow after it, the name is also the way to another place's
             // weather: the two together are one button, so a tap on either opens the
-            // search. WeatherKit only for now — the new service doesn't read
-            // `ChosenPlace` yet, so offering the choice there would pick a place and then
-            // go on showing the weather where the phone is.
-            if weatherSource == .weatherKit {
-                Button {
-                    isSearchingLocation = true
-                } label: {
-                    HStack(alignment: .firstTextBaseline, spacing: 8 * deviceScale) {
-                        locationName
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: Theme.captionSize * deviceScale, weight: .semibold))
-                            .foregroundStyle(Theme.inkMuted)
-                    }
-                    // A finger-sized target without a taller header: the padding widens
-                    // what can be tapped, and the negative padding after it takes the
-                    // same room back out of the layout.
-                    .padding(.vertical, 12 * deviceScale)
-                    .padding(.trailing, 16 * deviceScale)
-                    .contentShape(Rectangle())
-                    .padding(.vertical, -12 * deviceScale)
-                    .padding(.trailing, -16 * deviceScale)
+            // search.
+            Button {
+                isSearchingLocation = true
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 8 * deviceScale) {
+                    locationName
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: Theme.captionSize * deviceScale, weight: .semibold))
+                        .foregroundStyle(Theme.inkMuted)
                 }
-                .buttonStyle(.plain)
-                .accessibilityHint("Choose another location")
-            } else {
-                locationName
+                // A finger-sized target without a taller header: the padding widens
+                // what can be tapped, and the negative padding after it takes the
+                // same room back out of the layout.
+                .padding(.vertical, 12 * deviceScale)
+                .padding(.trailing, 16 * deviceScale)
+                .contentShape(Rectangle())
+                .padding(.vertical, -12 * deviceScale)
+                .padding(.trailing, -16 * deviceScale)
             }
+            .buttonStyle(.plain)
+            .accessibilityHint("Choose another location")
 
             Spacer()
 

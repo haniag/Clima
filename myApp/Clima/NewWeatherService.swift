@@ -64,7 +64,18 @@ final class NewWeatherService: WeatherProviding {
             throw WeatherServiceError.notConfigured
         }
 
-        let location = try await locationProvider.currentLocation()
+        // A place picked in the search sheet wins over the phone's own location — and
+        // needs no permission or fix, since its coordinates came with it. Its time zone is
+        // where the strips count their days and hours; for the current location that's
+        // the phone's, since the phone is there.
+        let place = ChosenPlace.saved
+        let location: CLLocation
+        if let place {
+            location = place.location
+        } else {
+            location = try await locationProvider.currentLocation()
+        }
+        let timeZone = place?.timeZone ?? .current
 
         // All three requests go out at once, and the reading is only kept if all of them
         // succeed — the same all-or-nothing rule WeatherKit's single call gives, so the
@@ -73,8 +84,8 @@ final class NewWeatherService: WeatherProviding {
         async let dailyRequest = Self.getIfSet(FifteenDayForecast.self, from: Self.dailyForecastURL, at: location)
         async let hourlyRequest = Self.getIfSet(HourlyForecastResponse.self, from: Self.hourlyForecastURL, at: location)
         // The place name goes out with them but isn't part of that rule — it can't fail,
-        // only come back nil. See `LocationNameService`.
-        async let locationName = LocationNameService.name(for: location)
+        // only come back nil. See `LocationNameService`. A chosen place already has one.
+        async let locationName = Self.name(of: place, at: location)
         let (observation, forecast, hourly) = try await (observationRequest, dailyRequest, hourlyRequest)
 
         let condition = WeatherCondition(iconCode: observation.iconCode)
@@ -89,16 +100,23 @@ final class NewWeatherService: WeatherProviding {
             conditionLabel: observation.wxPhraseLong ?? observation.wxPhraseShort ?? condition.label,
             humidity: observation.relativeHumidity.map { Int($0.rounded()) },
             precipitationLastHour: observation.precip1Hour,
-            daily: forecast.map { Self.dailyForecasts(from: $0, today: fetchedAt) }
-                ?? .placeholder(from: fetchedAt),
-            hourly: Self.hourlyForecasts(from: hourly, at: fetchedAt),
-            sunEvents: Self.sunEvents(today: observation, later: forecast),
+            daily: forecast.map { Self.dailyForecasts(from: $0, today: fetchedAt, in: timeZone) }
+                ?? .placeholder(from: fetchedAt, in: timeZone),
+            hourly: Self.hourlyForecasts(from: hourly, at: fetchedAt, in: timeZone),
+            sunEvents: Self.sunEvents(today: observation, later: forecast, in: timeZone),
             locationName: await locationName,
-            // The phone's: this service only reads the current location so far, and the
-            // phone is there. (It ignores `ChosenPlace` until it's taught to use it.)
-            timeZone: .current,
+            timeZone: timeZone,
             fetchedAt: fetchedAt
         )
+    }
+
+    /// The header's name for where the reading is: a chosen place already has one from
+    /// the search; the current location is looked up.
+    private static func name(of place: ChosenPlace?, at location: CLLocation) async -> String? {
+        if let place {
+            return place.name
+        }
+        return await LocationNameService.name(for: location)
     }
 
     /// One request to one of the service's endpoints, decoded into `T`. Anything but a 200
@@ -133,9 +151,11 @@ final class NewWeatherService: WeatherProviding {
     /// The one exception is today after its sunset: the day is over as far as anyone
     /// looking at the sky is concerned, so today's column shows the night's icon, moon
     /// and all.
-    private static func dailyForecasts(from forecast: FifteenDayForecast, today: Date) -> [DailyForecast] {
-        let calendar = Calendar.current
-        let start = [DailyForecast].stripStart(containing: today)
+    ///
+    /// Days run midnight to midnight in `timeZone`, the place the weather is for.
+    private static func dailyForecasts(from forecast: FifteenDayForecast, today: Date, in timeZone: TimeZone) -> [DailyForecast] {
+        let calendar = Calendar.local(to: timeZone)
+        let start = [DailyForecast].stripStart(containing: today, in: timeZone)
         let parts = forecast.daypart.first
 
         return (0..<7).map { offset in
@@ -191,8 +211,12 @@ final class NewWeatherService: WeatherProviding {
     /// about today, so the rest come from the 15-day forecast, which carries the same
     /// two fields for every day. Where both have the same day's sunrise (or sunset),
     /// current conditions' is the one kept.
-    private static func sunEvents(today observation: CurrentObservation, later forecast: FifteenDayForecast?) -> [SunEvent] {
-        let calendar = Calendar.current
+    private static func sunEvents(
+        today observation: CurrentObservation,
+        later forecast: FifteenDayForecast?,
+        in timeZone: TimeZone
+    ) -> [SunEvent] {
+        let calendar = Calendar.local(to: timeZone)
         let current = [
             observation.sunriseTimeLocal.flatMap { localTimeFormatter.date(from: $0) }
                 .map { SunEvent(kind: .sunrise, date: $0) },
@@ -271,10 +295,14 @@ final class NewWeatherService: WeatherProviding {
     /// that, not by where it sits in the list. The hour we're in is left out: the dial
     /// already shows it. Every hour shows dashes while the endpoint isn't set, apart from
     /// what `HourlyCache` has.
-    private static func hourlyForecasts(from forecast: HourlyForecastResponse?, at date: Date) -> [HourlyForecast] {
-        guard let forecast else { return .placeholder(from: date) }
-        let start = [HourlyForecast].stripStart(after: date)
-        let end = [HourlyForecast].stripEnd(after: date)
+    private static func hourlyForecasts(
+        from forecast: HourlyForecastResponse?,
+        at date: Date,
+        in timeZone: TimeZone
+    ) -> [HourlyForecast] {
+        guard let forecast else { return .placeholder(from: date, in: timeZone) }
+        let start = [HourlyForecast].stripStart(after: date, in: timeZone)
+        let end = [HourlyForecast].stripEnd(after: date, in: timeZone)
         let hours = forecast.validTimeUtc.indices.compactMap { index -> HourlyForecast? in
             let hourDate = Date(timeIntervalSince1970: forecast.validTimeUtc[index])
             guard hourDate >= start, hourDate < end else { return nil }
@@ -286,7 +314,7 @@ final class NewWeatherService: WeatherProviding {
                 precipitationChance: element(forecast.precipChance, index).map { Int($0.rounded()) }
             )
         }
-        return hours.isEmpty ? .placeholder(from: date) : hours
+        return hours.isEmpty ? .placeholder(from: date, in: timeZone) : hours
     }
 }
 
