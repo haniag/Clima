@@ -798,9 +798,8 @@ private struct ForecastDayColumn: View {
                 .font(Theme.valueFont(scale: deviceScale))
                 .foregroundStyle(Theme.panelInkMuted)
 
-            // Only a likely chance is shown: seven small percentages, most of them near
-            // zero, read as noise. The condition icon above already says what's coming,
-            // so the number needs no drop icon beside it.
+            // The condition icon above already says what's coming, so the number needs
+            // no drop icon beside it.
             Text(precipitationChanceText(day.precipitationChance))
                 .font(Theme.valueFont(scale: deviceScale))
                 .foregroundStyle(Theme.panelInkMuted)
@@ -808,13 +807,10 @@ private struct ForecastDayColumn: View {
     }
 }
 
-/// Chances at or below this show as a dash rather than a number, on both strips.
-private let precipitationThreshold = 40
-
-/// The chance as "75%" when it's above the threshold, and "—" otherwise — whether it's
-/// too low to bother with or there's no reading yet.
+/// The chance as the weather service reports it ("0%", "75%"), on both strips, or "—"
+/// when there's no reading yet.
 private func precipitationChanceText(_ chance: Int?) -> String {
-    guard let chance, chance > precipitationThreshold else {
+    guard let chance else {
         return "—"
     }
     return "\(chance)%"
@@ -858,7 +854,6 @@ private struct HourlyColumn: View {
                 .font(Theme.valueFont(scale: deviceScale))
                 .foregroundStyle(Theme.panelInk)
 
-            // Same rule as the 7-day column: only a likely chance gets a number.
             Text(precipitationChanceText(hour.precipitationChance))
                 .font(Theme.valueFont(scale: deviceScale))
                 .foregroundStyle(Theme.panelInkMuted)
