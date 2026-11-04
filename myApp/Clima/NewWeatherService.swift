@@ -183,8 +183,12 @@ final class NewWeatherService: WeatherProviding {
             return DailyForecast(
                 date: date,
                 condition: condition,
-                highTemp: element(forecast.temperatureMax, index).map { Int($0.rounded()) },
-                lowTemp: element(forecast.temperatureMin, index).map { Int($0.rounded()) },
+                // The service drops today's high once its day part is over (around 3pm),
+                // so the calendar-day value, which lasts until midnight, fills in.
+                highTemp: (element(forecast.temperatureMax, index)
+                    ?? element(forecast.calendarDayTemperatureMax, index)).map { Int($0.rounded()) },
+                lowTemp: (element(forecast.temperatureMin, index)
+                    ?? element(forecast.calendarDayTemperatureMin, index)).map { Int($0.rounded()) },
                 precipitationChance: precipChance.map { Int($0.rounded()) }
             )
         }
@@ -360,6 +364,11 @@ nonisolated private struct FifteenDayForecast: Decodable {
     /// Degrees Fahrenheit, because the request asks for `units=e`.
     let temperatureMax: [Double?]
     let temperatureMin: [Double?]
+    /// The high and low over the whole calendar day, midnight to midnight. Unlike
+    /// `temperatureMax`, today's stays filled in after the afternoon, so it's the
+    /// fallback for it. Optional as a whole, so a response without it still decodes.
+    let calendarDayTemperatureMax: [Double?]?
+    let calendarDayTemperatureMin: [Double?]?
     /// Each day's sunset as local time with its UTC offset, e.g. `"2026-09-25T19:03:12-0400"`.
     /// Optional as a whole, so a response without it still decodes; the strip just
     /// doesn't switch today to night.
