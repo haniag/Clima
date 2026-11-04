@@ -1,15 +1,19 @@
 # Clima
 
-A small SwiftUI weather app built around a circular dial. Weather condition icons sit around the edge of the dial, and a pointer rotates to the one that matches the current weather. Below the dial are an hourly strip and a 7-day forecast.
+A small SwiftUI weather app built around a circular dial. Weather condition icons sit around the edge of the dial, and a pointer rotates to the one that matches the current weather.
 
-The app asks for location permission so it can fetch weather for where you are.
+# Features
+
+- An hourly and 7-day forecast sections.
+- The daily and hourly sections are synced, so that when you press on a day, you will jump to its hourly forecast.
+- The app asks for location permission so it can fetch weather for where you are. User can also find a specific location.
 
 The app was designed based on privacy in mind, as most commerical weather apps collect data about the user and device.
 
+<img width="250" height="541" alt="IMG_3248" src="https://github.com/user-attachments/assets/b422408b-8379-4f3e-9dcc-c860f709a78b" />
 
+<img width="250" height="541" alt="IMG_3247" src="https://github.com/user-attachments/assets/f7d7a674-a311-4366-b065-fc6878526a02" />
 
-<img width="563" height="1218" alt="IMG_3195" src="https://github.com/user-attachments/assets/1c2de133-b217-4ebd-930c-9c99004b408e" />
-<img width="563" height="1218" alt="IMG_3194" src="https://github.com/user-attachments/assets/0b22df82-9cac-402e-91d5-94a044eaa0b2" />
 
 Copyright © 2026 Hani Abughazaleh. All rights reserved.
 
