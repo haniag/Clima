@@ -80,6 +80,11 @@ struct LockScreenWeatherView: View {
                             Image(iconName)
                                 .resizable()
                                 .scaledToFit()
+                                // The artwork fills only about half of its SVG canvas,
+                                // the rest being empty margin, so it's drawn at 1.75×
+                                // the size of the 18pt slot. What overflows the slot
+                                // is that margin, and the layout around it is unchanged.
+                                .scaleEffect(1.75)
                         } else {
                             Text("—")
                         }
