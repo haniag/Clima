@@ -144,6 +144,12 @@ struct WeatherDialScreen: View {
         .onChange(of: weatherSource) {
             Task { await load() }
         }
+        // The lock screen widget reads its unit from what was last saved, so a flip of
+        // the °F/°C switch is saved straight away rather than waiting for the next fetch.
+        .onChange(of: useCelsius) {
+            guard let snapshot else { return }
+            WidgetWeather.publish(snapshot, useCelsius: useCelsius)
+        }
         .sheet(isPresented: $isSearchingLocation) {
             LocationSearchSheet(current: ChosenPlace.saved, source: weatherSource) { place in
                 ChosenPlace.choose(place)
@@ -208,6 +214,7 @@ struct WeatherDialScreen: View {
             guard generation == fetchGeneration else { return }
             snapshot = reading
             status = .ready
+            WidgetWeather.publish(reading, useCelsius: useCelsius)
         } catch {
             guard generation == fetchGeneration else { return }
             // A cancelled fetch isn't a failed one — the screen is going away, or a newer

@@ -11,7 +11,8 @@ import Foundation
 ///
 /// Nil — nothing saved — means "my current location", which is where the app starts.
 /// Kept in `UserDefaults`, so the choice survives quitting the app: someone following the
-/// weather somewhere else shouldn't have to pick it again every launch.
+/// weather somewhere else shouldn't have to pick it again every launch — and in the App
+/// Group's, so the lock screen widget fetches for the same place the app shows.
 ///
 /// `nonisolated` because the project puts types on the main actor by default, and the
 /// weather services read this from off it.
@@ -41,18 +42,36 @@ nonisolated struct ChosenPlace: Codable, Hashable {
 
     private static let key = "chosenPlace"
 
+    /// Where the choice and the recents are kept: the App Group shared with the widget.
+    ///
+    /// Builds before the widget kept them in the app's own `UserDefaults`; anything
+    /// found there is moved across the first time this is used, so nobody loses the
+    /// place they'd picked.
+    private static let store: UserDefaults = {
+        guard let shared = UserDefaults(suiteName: WidgetWeather.appGroup) else { return .standard }
+        for oldKey in [key, recentsKey] {
+            if let data = UserDefaults.standard.data(forKey: oldKey) {
+                if shared.data(forKey: oldKey) == nil {
+                    shared.set(data, forKey: oldKey)
+                }
+                UserDefaults.standard.removeObject(forKey: oldKey)
+            }
+        }
+        return shared
+    }()
+
     /// The place chosen in the search sheet, or nil for the current location.
     static var saved: ChosenPlace? {
         get {
-            guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+            guard let data = store.data(forKey: key) else { return nil }
             // Something that no longer decodes counts as no choice, rather than an error.
             return try? JSONDecoder().decode(ChosenPlace.self, from: data)
         }
         set {
             if let newValue, let data = try? JSONEncoder().encode(newValue) {
-                UserDefaults.standard.set(data, forKey: key)
+                store.set(data, forKey: key)
             } else {
-                UserDefaults.standard.removeObject(forKey: key)
+                store.removeObject(forKey: key)
             }
         }
     }
@@ -76,13 +95,13 @@ nonisolated struct ChosenPlace: Codable, Hashable {
     /// Shown in the search sheet so going back to one doesn't need another search.
     static var recents: [ChosenPlace] {
         get {
-            guard let data = UserDefaults.standard.data(forKey: recentsKey) else { return [] }
+            guard let data = store.data(forKey: recentsKey) else { return [] }
             return (try? JSONDecoder().decode([ChosenPlace].self, from: data)) ?? []
         }
         set {
             let kept = Array(newValue.prefix(recentsLimit))
             guard let data = try? JSONEncoder().encode(kept) else { return }
-            UserDefaults.standard.set(data, forKey: recentsKey)
+            store.set(data, forKey: recentsKey)
         }
     }
 

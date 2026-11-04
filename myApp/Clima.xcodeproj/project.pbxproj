@@ -6,20 +6,101 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		37A1C0DE2FB000010000000A /* ClimaWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 37A1C0DE2FB0000100000002 /* ClimaWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		37A1C0DE2FB000010000000B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 375C9E0A2FA299BD0094BEE9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 37A1C0DE2FB0000100000001;
+			remoteInfo = ClimaWidgetExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		37A1C0DE2FB0000100000009 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				37A1C0DE2FB000010000000A /* ClimaWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		375C9E122FA299BD0094BEE9 /* Clima.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Clima.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		37A1C0DE2FB0000100000002 /* ClimaWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ClimaWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		37A1C0DE2FB0000100000010 /* Exceptions for "Clima" folder in "ClimaWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				ChosenPlace.swift,
+				DailyForecast.swift,
+				HourlyCache.swift,
+				HourlyForecast.swift,
+				LocalCalendar.swift,
+				LocationNameService.swift,
+				LocationProvider.swift,
+				NewWeatherService.swift,
+				Secrets.swift,
+				WeatherCondition.swift,
+				WeatherService.swift,
+				WeatherSourceSwitch.swift,
+				WidgetPublisher.swift,
+			);
+			target = 37A1C0DE2FB0000100000001 /* ClimaWidgetExtension */;
+		};
+		37A1C0DE2FB0000100000005 /* Exceptions for "ClimaWidget" folder in "ClimaWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 37A1C0DE2FB0000100000001 /* ClimaWidgetExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		375C9E142FA299BD0094BEE9 /* Clima */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				37A1C0DE2FB0000100000010 /* Exceptions for "Clima" folder in "ClimaWidgetExtension" target */,
+			);
 			path = Clima;
+			sourceTree = "<group>";
+		};
+		37A1C0DE2FB0000100000003 /* ClimaWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				37A1C0DE2FB0000100000005 /* Exceptions for "ClimaWidget" folder in "ClimaWidgetExtension" target */,
+			);
+			path = ClimaWidget;
+			sourceTree = "<group>";
+		};
+		37A1C0DE2FB0000100000004 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		375C9E0F2FA299BD0094BEE9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		37A1C0DE2FB0000100000007 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +114,8 @@
 			isa = PBXGroup;
 			children = (
 				375C9E142FA299BD0094BEE9 /* Clima */,
+				37A1C0DE2FB0000100000003 /* ClimaWidget */,
+				37A1C0DE2FB0000100000004 /* Shared */,
 				375C9E132FA299BD0094BEE9 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +124,7 @@
 			isa = PBXGroup;
 			children = (
 				375C9E122FA299BD0094BEE9 /* Clima.app */,
+				37A1C0DE2FB0000100000002 /* ClimaWidgetExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -55,13 +139,16 @@
 				375C9E0E2FA299BD0094BEE9 /* Sources */,
 				375C9E0F2FA299BD0094BEE9 /* Frameworks */,
 				375C9E102FA299BD0094BEE9 /* Resources */,
+				37A1C0DE2FB0000100000009 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				37A1C0DE2FB000010000000C /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				375C9E142FA299BD0094BEE9 /* Clima */,
+				37A1C0DE2FB0000100000004 /* Shared */,
 			);
 			name = Clima;
 			packageProductDependencies = (
@@ -69,6 +156,29 @@
 			productName = Clima;
 			productReference = 375C9E122FA299BD0094BEE9 /* Clima.app */;
 			productType = "com.apple.product-type.application";
+		};
+		37A1C0DE2FB0000100000001 /* ClimaWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 37A1C0DE2FB000010000000D /* Build configuration list for PBXNativeTarget "ClimaWidgetExtension" */;
+			buildPhases = (
+				37A1C0DE2FB0000100000006 /* Sources */,
+				37A1C0DE2FB0000100000007 /* Frameworks */,
+				37A1C0DE2FB0000100000008 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				37A1C0DE2FB0000100000003 /* ClimaWidget */,
+				37A1C0DE2FB0000100000004 /* Shared */,
+			);
+			name = ClimaWidgetExtension;
+			packageProductDependencies = (
+			);
+			productName = ClimaWidgetExtension;
+			productReference = 37A1C0DE2FB0000100000002 /* ClimaWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -82,6 +192,9 @@
 				TargetAttributes = {
 					375C9E112FA299BD0094BEE9 = {
 						CreatedOnToolsVersion = 26.4;
+					};
+					37A1C0DE2FB0000100000001 = {
+						CreatedOnToolsVersion = 27.1;
 					};
 				};
 			};
@@ -100,12 +213,20 @@
 			projectRoot = "";
 			targets = (
 				375C9E112FA299BD0094BEE9 /* Clima */,
+				37A1C0DE2FB0000100000001 /* ClimaWidgetExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		375C9E102FA299BD0094BEE9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		37A1C0DE2FB0000100000008 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +243,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		37A1C0DE2FB0000100000006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		37A1C0DE2FB000010000000C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 37A1C0DE2FB0000100000001 /* ClimaWidgetExtension */;
+			targetProxy = 37A1C0DE2FB000010000000B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		375C9E1B2FA299BE0094BEE9 /* Debug */ = {
@@ -330,6 +466,72 @@
 			};
 			name = Release;
 		};
+		37A1C0DE2FB000010000000E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ClimaWidget/ClimaWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6GBM8GTKU5;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ClimaWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Clima;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Clima uses your location to show the weather where you are.";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fursa.Clima.ClimaWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		37A1C0DE2FB000010000000F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ClimaWidget/ClimaWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6GBM8GTKU5;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ClimaWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Clima;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Clima uses your location to show the weather where you are.";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fursa.Clima.ClimaWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -347,6 +549,15 @@
 			buildConfigurations = (
 				375C9E1E2FA299BE0094BEE9 /* Debug */,
 				375C9E1F2FA299BE0094BEE9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		37A1C0DE2FB000010000000D /* Build configuration list for PBXNativeTarget "ClimaWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				37A1C0DE2FB000010000000E /* Debug */,
+				37A1C0DE2FB000010000000F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

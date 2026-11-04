@@ -348,23 +348,8 @@ struct Triangle: Shape {
 
 // MARK: - Formatting
 
-/// Formats a Fahrenheit reading, converting to Celsius when the switch is on.
-///
-/// Only the degree sign is shown, never the unit: the unit is already stated once, by
-/// the °F/°C switch in Settings. Repeating it on all 22 readings on screen is noise,
-/// not information.
-///
-/// `nil` — no reading, for whatever reason — formats as a bare dash, with no degree sign
-/// after it: a unit with nothing to qualify reads as a stray mark rather than as a
-/// deliberate blank. Taking an optional here rather than making each caller unwrap is
-/// what keeps that decision in one place, so every temperature on screen goes missing
-/// the same way.
-func temperatureText(_ fahrenheit: Int?, useCelsius: Bool) -> String {
-    guard let fahrenheit else { return "—" }
-    guard useCelsius else { return "\(fahrenheit)°" }
-    let celsius = Int((Double(fahrenheit - 32) * 5 / 9).rounded())
-    return "\(celsius)°"
-}
+// `temperatureText(_:useCelsius:)` lives in Shared/TemperatureText.swift, so the lock
+// screen widget formats temperatures with the same function as the app.
 
 /// Formats an amount of precipitation in inches, or in millimetres when `useMetric` is
 /// on — "0.02 in", "0.5 mm".
