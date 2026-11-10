@@ -35,14 +35,17 @@ struct WeatherDialScreen: View {
     enum FetchStatus: Equatable {
         case loading
         case ready
-        case failed(String)
+        /// The sentence to show, and whether the cause is the app not being allowed the
+        /// phone's location — the one failure that gets buttons under it; see
+        /// `locationDeniedActions`.
+        case failed(String, locationDenied: Bool)
     }
 
     // Shared across every view that reads them (same UserDefaults key), so changing
     // either one here updates the readings immediately. Appearance is applied by this
     // screen's own `.preferredColorScheme` below, rather than up on `ClimaApp`'s
     // WindowGroup, so the Light/Dark switch works in the canvas too.
-    @AppStorage("useCelsius") private var useCelsius = false
+    @AppStorage("useCelsius") private var useCelsius = TemperatureUnit.phoneUsesCelsius
 
     /// The Light/Dark switch's setting, or `nil` if it's never been touched — in which
     /// case the app follows the phone's own appearance. A new key rather than the old
@@ -64,8 +67,25 @@ struct WeatherDialScreen: View {
     /// once the strip stops. Drives the 7-day strip's marker; see `markedDay`.
     @State private var hourlyMarkedIndex = 0
 
+    /// The hourly strip's columns: the reading's hours from the next one on, with the
+    /// sunrises and sunsets among them. Built by `stripItems(from:at:)` when a reading
+    /// lands and once a minute after that, and kept here in between — the strip reads the
+    /// list on every frame of a swipe, and building it means filtering and sorting about
+    /// 170 hours.
+    @State private var stripItems = WeatherDialScreen.stripItems(from: nil, at: Date())
+
+    /// Whether the next reading to land should bring the hourly strip back to its start.
+    /// Set by `show(_:resetStrip:)`, read by the strip when the reading arrives.
+    @State private var returnStripToStart = true
+
+    /// When the last fetch was started, whoever started it — see `minuteTick()`.
+    @State private var lastAttemptAt = Date.distantPast
+
     /// Whether the location search sheet is open — see the header's arrow.
     @State private var isSearchingLocation = false
+
+    /// Opens the app's page in the Settings app — see `locationDeniedActions`.
+    @Environment(\.openURL) private var openURL
 
     /// The appearance actually on screen. With no override this is the phone's, since
     /// `.preferredColorScheme(nil)` below leaves the system's choice in place.
@@ -97,6 +117,14 @@ struct WeatherDialScreen: View {
     /// slightly behind is visibly behind rather than silently so.
     private static let staleAfter: TimeInterval = 10 * 60
 
+    /// How long the app waits after any fetch before starting another one by itself.
+    ///
+    /// Only matters while fetches are failing: a good reading isn't stale for ten
+    /// minutes, but a failed one leaves the old reading stale straight away, and without
+    /// this the once-a-minute check would try again every minute for as long as the
+    /// phone was offline.
+    private static let retryAfter: TimeInterval = 2 * 60
+
     var body: some View {
         // The drawer is a bottom bar, not the last block on the page: it stays put while
         // the page scrolls behind it, so it can't live inside the scroll content. It sits
@@ -125,14 +153,34 @@ struct WeatherDialScreen: View {
         .preferredColorScheme(darkModeOverride.map { $0 ? .dark : .light })
         // `.task` rather than `.onAppear` so the fetch is tied to this view's lifetime:
         // if the screen goes away mid-request, the request is cancelled with it.
+        // Before the first fetch rather than instead of it: the reading kept from the
+        // last launch goes on screen straight away, and the fetch below replaces it.
+        .onAppear(perform: showSavedReading)
         .task { await load() }
+        // Left open on a desk, the app would otherwise show the same reading all
+        // afternoon: nothing above fetches unless the app is opened, returned to, or
+        // tapped. So while it's on screen it checks once a minute — see `minuteTick()`.
+        // Tied to `scenePhase`, so the checking stops when the app leaves the screen and
+        // starts again when it comes back.
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard !Task.isCancelled else { return }
+                minuteTick()
+            }
+        }
         // Left in a pocket for an hour, the app would otherwise still be showing the
         // reading it had when it went in there. `.onChange` doesn't fire for the initial
         // value, so this can't double up with the `.task` above on launch — and even if
         // the scene passes through `.inactive` on the way up, `refresh()` declines while
         // that first fetch is still running.
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .active, isReadingStale else { return }
+            guard phase == .active else { return }
+            // Time has passed while the app was away, whether or not enough for a new
+            // reading: the strip should open on the hour that's next now.
+            rebuildStripItems()
+            guard isReadingStale else { return }
             refresh()
         }
         // Switched in the Settings app: fetch from the newly chosen service straight away,
@@ -183,9 +231,60 @@ struct WeatherDialScreen: View {
     ///
     /// `.task` calls `load()` directly rather than coming through here, because `status`
     /// starts out `.loading` — the very first fetch would decline itself.
-    private func refresh() {
+    ///
+    /// `resetStrip` is whether the hourly strip should swipe itself back to its start when
+    /// the reading lands. Yes when someone asked for the reading; no when the app fetched
+    /// by itself, which shouldn't pull the strip out from under a finger.
+    private func refresh(resetStrip: Bool = true) {
         guard status != .loading else { return }
-        Task { await load() }
+        Task { await load(resetStrip: resetStrip) }
+    }
+
+    /// Runs once a minute while the app is on screen.
+    ///
+    /// Every minute it rebuilds the hourly strip, so an hour that has gone by drops off
+    /// the front. And once the reading is older than `staleAfter`, it fetches a new one —
+    /// the same ten-minute gate a return to the app goes through, so an app left open
+    /// costs no more fetches than one opened every ten minutes.
+    private func minuteTick() {
+        rebuildStripItems()
+        guard isReadingStale,
+              Date().timeIntervalSince(lastAttemptAt) > Self.retryAfter
+        else { return }
+        refresh(resetStrip: false)
+    }
+
+    /// Puts the reading kept from the last launch on screen, if there is one and nothing
+    /// newer has arrived first. `status` is left at `.loading`, so the readout says
+    /// "Updating" under it until the first fetch answers.
+    private func showSavedReading() {
+        guard snapshot == nil, let saved = weatherService.savedWeather else { return }
+        show(saved, resetStrip: true)
+    }
+
+    /// Puts a reading on screen, and rebuilds the hourly strip's columns from it.
+    ///
+    /// The strip goes back to its start if it was asked to, or if that's where it already
+    /// was — its first hour may have changed, and it should stay on what's next.
+    private func show(_ reading: WeatherSnapshot, resetStrip: Bool) {
+        returnStripToStart = resetStrip || isStripAtStart
+        snapshot = reading
+        stripItems = Self.stripItems(from: reading, at: Date())
+    }
+
+    /// Rebuilds the hourly strip's columns for the time it is now, from the reading
+    /// already on screen. A strip resting at its start stays at its start.
+    private func rebuildStripItems() {
+        let wasAtStart = isStripAtStart
+        stripItems = Self.stripItems(from: snapshot, at: Date())
+        if wasAtStart {
+            scrollHourlyToStart()
+        }
+    }
+
+    /// Whether the hourly strip is on its first column — or hasn't been placed yet.
+    private var isStripAtStart: Bool {
+        hourlyScrollPosition == nil || hourlyScrollPosition == stripItems.first?.id
     }
 
     /// Counts fetches so a slow one can tell it has been overtaken.
@@ -202,9 +301,10 @@ struct WeatherDialScreen: View {
     /// Never throws: every outcome is a thing the readout knows how to display, so the
     /// error is turned into a sentence here rather than propagated to a caller that
     /// would only have to do the same.
-    private func load() async {
+    private func load(resetStrip: Bool = true) async {
         fetchGeneration += 1
         let generation = fetchGeneration
+        lastAttemptAt = Date()
         status = .loading
 
         do {
@@ -212,7 +312,7 @@ struct WeatherDialScreen: View {
             // Somebody started a newer fetch while this one was out. Their answer is the
             // one that should win, so this one retires quietly.
             guard generation == fetchGeneration else { return }
-            snapshot = reading
+            show(reading, resetStrip: resetStrip)
             status = .ready
             WidgetWeather.publish(reading, useCelsius: useCelsius)
         } catch {
@@ -224,7 +324,10 @@ struct WeatherDialScreen: View {
             // Never `error.localizedDescription` straight to the screen — see
             // `WeatherErrorMessage`, which picks the sentence a reader can act on and
             // sends the raw error to the console instead.
-            status = .failed(WeatherErrorMessage.text(for: error))
+            status = .failed(
+                WeatherErrorMessage.text(for: error),
+                locationDenied: WeatherErrorMessage.isLocationDenied(error)
+            )
         }
     }
 
@@ -236,7 +339,7 @@ struct WeatherDialScreen: View {
                 // Passed through as an optional: with no reading the dial highlights
                 // nothing, rather than sitting lit on `.clear` and telling the reader it's
                 // sunny out while the readout underneath says there's no reading.
-                DialView(condition: snapshot?.condition, onRefresh: refresh)
+                DialView(condition: snapshot?.condition, onRefresh: { refresh() })
                     // The hub hangs below the dial's own layout frame; reserve that
                     // space so the reading below it isn't pushed into the hub.
                     .padding(.bottom, DialView.hubOverhang(scale: deviceScale))
@@ -254,8 +357,7 @@ struct WeatherDialScreen: View {
                     hourlyStrip
 
                     strip {
-                        // Worked out once here rather than per column: it rebuilds the
-                        // hourly strip's list of columns to find the one under its marker.
+                        // Worked out once here rather than once per column.
                         let marked = markedDay
                         ForEach(snapshot?.daily ?? .placeholder(in: timeZone)) { day in
                             ForecastDayColumn(
@@ -390,6 +492,18 @@ struct WeatherDialScreen: View {
     /// state that is — the way an instrument's own display reports a fault rather than
     /// being replaced by a warning light.
     private var readout: some View {
+        VStack(spacing: 14 * deviceScale) {
+            reading
+
+            // Outside `reading`, which VoiceOver reads as one element: these have to stay
+            // two buttons it can land on separately.
+            if case .failed(_, locationDenied: true) = status {
+                locationDeniedActions
+            }
+        }
+    }
+
+    private var reading: some View {
         VStack(spacing: 4 * deviceScale) {
             // The smaller readings sit to the right of the temperature, the bottom one on
             // its baseline. An invisible copy on the left balances them, so the number
@@ -415,7 +529,7 @@ struct WeatherDialScreen: View {
                 .climaCaps(.caption)
                 .foregroundStyle(Theme.inkMuted)
 
-            if case .failed(let message) = status {
+            if case .failed(let message, _) = status {
                 // Sentence case, not the tracked-out caps above: these run to a line or
                 // two and name a place to go in Settings, so they have to be read rather
                 // than merely registered.
@@ -431,6 +545,40 @@ struct WeatherDialScreen: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// The two ways out of "Clima needs your location": switch it back on, or stop
+    /// needing it by choosing a place by name.
+    ///
+    /// Shown only for that failure. Every other one is fixed by trying again, and the hub
+    /// is already the button for that.
+    private var locationDeniedActions: some View {
+        HStack(spacing: 10 * deviceScale) {
+            readoutButton("Open Settings") {
+                // The app's own page in Settings, which is where its Location row is.
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    openURL(url)
+                }
+            }
+            readoutButton("Choose a place") {
+                isSearchingLocation = true
+            }
+        }
+    }
+
+    /// A small outlined button in the app's label style — quiet enough to sit under the
+    /// readout without competing with it.
+    private func readoutButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .climaCaps(.small, bold: true)
+                .foregroundStyle(Theme.ink)
+                .padding(.horizontal, 14 * deviceScale)
+                .padding(.vertical, 10 * deviceScale)
+                .overlay(Capsule().strokeBorder(Theme.inkMuted, lineWidth: deviceScale))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
     /// A dash until there's a real reading — the same placeholder a physical gauge shows
     /// when its sensor hasn't reported yet, rather than a plausible-looking zero the eye
     /// would take for a measurement.
@@ -443,7 +591,8 @@ struct WeatherDialScreen: View {
         return temperatureText(snapshot.temperature, useCelsius: useCelsius)
     }
 
-    /// "Updated 14:32", or nil when there's no reading to date.
+    /// "Updated 14:32" — "Updated 2:32 PM" on a phone set to 12-hour time — or nil when
+    /// there's no reading to date.
     ///
     /// The day is added once the reading is no longer from today — which happens if the
     /// app is left open overnight — because a bare "04:15" on a reading twelve hours old
@@ -454,11 +603,13 @@ struct WeatherDialScreen: View {
     private var updatedLabel: String? {
         guard let snapshot else { return nil }
 
-        let formatter = DateFormatter()
-        formatter.dateFormat = Calendar.current.isDateInToday(snapshot.fetchedAt)
-            ? "HH:mm"
-            : "EEE d MMM HH:mm"
-        return "Updated \(formatter.string(from: snapshot.fetchedAt))"
+        // `formatted` writes both the way the phone's region and clock settings say to.
+        let time = snapshot.fetchedAt.formatted(date: .omitted, time: .shortened)
+        guard !Calendar.current.isDateInToday(snapshot.fetchedAt) else {
+            return "Updated \(time)"
+        }
+        let day = snapshot.fetchedAt.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+        return "Updated \(day) \(time)"
     }
 
     private var readoutCaption: String {
@@ -473,10 +624,10 @@ struct WeatherDialScreen: View {
         }
     }
 
-    /// Precipitation in the last hour, above humidity — whichever of the two the
-    /// reading has. Empty with no reading, so the dash under the dial stays centred.
+    /// Precipitation in the last hour, above humidity, above wind — whichever of the three
+    /// the reading has. Empty with no reading, so the dash under the dial stays centred.
     ///
-    /// Leading-aligned so the two icons line up in a column and the numbers start at the
+    /// Leading-aligned so the icons line up in a column and the numbers start at the
     /// same place.
     @ViewBuilder
     private var sideReadings: some View {
@@ -484,7 +635,7 @@ struct WeatherDialScreen: View {
             VStack(alignment: .leading, spacing: 4 * deviceScale) {
                 if let precipitation = snapshot.precipitationLastHour {
                     sideReading(
-                        icon: "precipitation",
+                        icon: Image("precipitation"),
                         value: precipitationText(precipitation, useMetric: useCelsius)
                     )
                     .accessibilityLabel(
@@ -497,16 +648,30 @@ struct WeatherDialScreen: View {
                 if let humidity = snapshot.humidity {
                     // The half-filled drop, deliberately not the precipitation one above
                     // it, so the two readings can't be mistaken for each other.
-                    sideReading(icon: "humidity", value: "\(humidity)%")
+                    sideReading(icon: Image("humidity"), value: "\(humidity)%")
                         .accessibilityLabel("Humidity \(humidity) percent")
+                }
+                if let wind = snapshot.windSpeed {
+                    // Apple's own wind symbol rather than artwork of ours: the dial's
+                    // "windy" icon is drawn for 70pt and turns to a smudge at 16.
+                    sideReading(
+                        icon: Image(systemName: "wind"),
+                        value: windText(wind, useMetric: useCelsius)
+                    )
+                    .accessibilityLabel(
+                        "Wind "
+                            + windText(wind, useMetric: useCelsius)
+                                .replacingOccurrences(of: " mph", with: " miles per hour")
+                                .replacingOccurrences(of: " km/h", with: " kilometres per hour")
+                    )
                 }
             }
         }
     }
 
-    private func sideReading(icon: String, value: String) -> some View {
+    private func sideReading(icon: Image, value: String) -> some View {
         HStack(spacing: 2 * deviceScale) {
-            Image(icon)
+            icon
                 .resizable()
                 .scaledToFit()
                 .frame(width: 16 * deviceScale, height: 16 * deviceScale)
@@ -548,7 +713,7 @@ struct WeatherDialScreen: View {
         stripPanel {
             ScrollView(.horizontal) {
                 HStack(spacing: 0) {
-                    ForEach(visibleStripItems) { item in
+                    ForEach(stripItems) { item in
                         Group {
                             switch item {
                             case .hour(let hour):
@@ -597,7 +762,7 @@ struct WeatherDialScreen: View {
             // sits in them; the marker's slot starts the leading margin on from there,
             // so that's how far the strip has travelled under it.
             .onScrollGeometryChange(for: Int.self) { geometry in
-                let count = visibleStripItems.count
+                let count = stripItems.count
                 guard count > 0, geometry.contentSize.width > 0 else { return 0 }
                 let columnWidth = geometry.contentSize.width / CGFloat(count)
                 let travelled = geometry.contentOffset.x + geometry.contentInsets.leading
@@ -608,13 +773,18 @@ struct WeatherDialScreen: View {
             }
         }
         .onAppear(perform: scrollHourlyToStart)
-        .onChange(of: snapshot?.fetchedAt) { scrollHourlyToStart() }
+        .onChange(of: snapshot?.fetchedAt) {
+            if returnStripToStart {
+                scrollHourlyToStart()
+            }
+        }
     }
 
-    /// Brings the strip back to its first column when the screen appears and whenever a
-    /// new reading lands, so a refresh also puts what's next back where it's expected.
+    /// Brings the strip back to its first column when the screen appears and when a new
+    /// reading that was asked for lands, so a refresh also puts what's next back where
+    /// it's expected.
     private func scrollHourlyToStart() {
-        hourlyScrollPosition = visibleStripItems.first?.id
+        hourlyScrollPosition = stripItems.first?.id
     }
 
     /// Swipes the hourly strip to `day`, for a tap on its column in the 7-day strip: the
@@ -625,7 +795,7 @@ struct WeatherDialScreen: View {
     /// it's the day's first column instead — for today, the strip's start. A day the hours
     /// don't reach leaves the strip where it is.
     private func showHours(for day: Date) {
-        let items = visibleStripItems
+        let items = stripItems
         let dayItems = items.filter { calendar.isDate($0.id.date, inSameDayAs: day) }
         let sunrise = dayItems.first { item in
             if case .sun(let event) = item, event.kind == .sunrise { return true }
@@ -644,7 +814,7 @@ struct WeatherDialScreen: View {
     /// pinned marker. Swiping tomorrow's 00 under the marker moves the 7-day marker
     /// below onto tomorrow, and swiping it back out brings the marker home.
     private var markedDay: Date {
-        let items = visibleStripItems
+        let items = stripItems
         guard items.indices.contains(hourlyMarkedIndex) else { return Date() }
         return items[hourlyMarkedIndex].id.date
     }
@@ -658,8 +828,11 @@ struct WeatherDialScreen: View {
     /// gone by. Sunrises and sunsets are trimmed to the same window: anything still to
     /// come — so one due before the first hour column leads the strip — up to the last
     /// hour column.
-    private var visibleStripItems: [HourlyStripItem] {
-        let now = Date()
+    ///
+    /// A function of the reading and the time and nothing else, so it can be worked out
+    /// once and kept — see `stripItems` — rather than on every frame of a swipe.
+    private static func stripItems(from snapshot: WeatherSnapshot?, at now: Date) -> [HourlyStripItem] {
+        let timeZone = snapshot?.timeZone ?? .current
         let firstHour = [HourlyForecast].stripStart(after: now, in: timeZone)
         var hours = (snapshot?.hourly ?? .placeholder(in: timeZone)).filter { $0.date >= firstHour }
         // A reading so old that none of its hours are left: show empty slots instead.
@@ -718,577 +891,6 @@ struct WeatherDialScreen: View {
         // width themselves — each one is `maxWidth: .infinity`, so they spread rather
         // than leaving a margin.
         .padding(.horizontal, -stripBleed)
-    }
-}
-
-// MARK: - Forecast columns
-
-/// The width every value's icon and "now" marker are sized to, at `deviceScale` 1 (the
-/// iPhone 16 Pro this was tuned on).
-///
-/// Measured from the rendered app rather than guessed: the temperature text is ~24pt
-/// wide at its font, but the condition icons — measured the same way, glyph edge to
-/// glyph edge — only fill about half of their old 26pt frame, so *nominally* matching
-/// the number's width left them looking much smaller than it. 41pt is about as far as
-/// that can be pushed before it outgrows what's actually available: the hourly strip's
-/// 8 columns leave ~41.5pt each inside the panel, the tightest of the two rows, so this
-/// is at the ceiling rather than a true pixel match to the number. Scaling this
-/// alongside the panel it sits in keeps that same tight-but-fitting relationship on
-/// every iPhone rather than just the one it was measured on.
-private let baseStripContentWidth: CGFloat = 41
-
-/// The corner radius of a forecast panel, at `deviceScale` 1. Shared with the settings
-/// drawer, whose open state is meant to be indistinguishable from one of these panels —
-/// one number, so the two can't drift apart.
-private let baseStripCornerRadius: CGFloat = 18
-
-/// One column in the 7-day strip: weekday name, condition icon, high, low, and the
-/// chance of precipitation.
-private struct ForecastDayColumn: View {
-    let day: DailyForecast
-    /// Whether this column carries the marker: the day the hourly strip above is
-    /// showing — see `markedDay`. Today, until the hours are swiped into another day.
-    let isMarked: Bool
-    /// Called when the column is tapped: swipes the hourly strip to this day.
-    let onSelect: () -> Void
-
-    @AppStorage("useCelsius") private var useCelsius = false
-    @Environment(\.deviceScale) private var deviceScale
-    /// The place the weather is for — see `WeatherDialScreen.timeZone`.
-    @Environment(\.timeZone) private var timeZone
-
-    var body: some View {
-        column
-            // The whole column is the target, gaps between its rows included.
-            .contentShape(Rectangle())
-            .onTapGesture(perform: onSelect)
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityHint("Shows this day's hours")
-    }
-
-    private var column: some View {
-        StripColumn(isActive: isMarked) {
-            Text(day.dayLabel(in: timeZone))
-                .climaCaps(.heading)
-                .foregroundStyle(Theme.panelInk)
-
-            // No condition, no icon — a guessed one would be as misleading as a guessed
-            // number. The empty frame keeps every column's rows on the same baselines, so
-            // the strip doesn't jump when a reading finally lands.
-            Group {
-                if let condition = day.condition {
-                    Image(condition.iconName)
-                        .resizable()
-                        .scaledToFit()
-                        .foregroundStyle(Theme.panelIcon)
-                } else {
-                    Color.clear
-                }
-            }
-            .frame(width: baseStripContentWidth * deviceScale, height: baseStripContentWidth * deviceScale)
-
-            // Regular even for today: the marker above the column already says which day
-            // is today, and a bold high read as heavier than the rest of the row.
-            Text(temperatureText(day.highTemp, useCelsius: useCelsius))
-                .font(Theme.valueFont(scale: deviceScale))
-                .foregroundStyle(Theme.panelInk)
-
-            Text(temperatureText(day.lowTemp, useCelsius: useCelsius))
-                .font(Theme.valueFont(scale: deviceScale))
-                .foregroundStyle(Theme.panelInkMuted)
-
-            // The condition icon above already says what's coming, so the number needs
-            // no drop icon beside it.
-            Text(precipitationChanceText(day.precipitationChance))
-                .font(Theme.valueFont(scale: deviceScale))
-                .foregroundStyle(Theme.panelInkMuted)
-        }
-    }
-}
-
-/// The chance as the weather service reports it ("0%", "75%"), on both strips, or "—"
-/// when there's no reading yet.
-private func precipitationChanceText(_ chance: Int?) -> String {
-    guard let chance else {
-        return "—"
-    }
-    return "\(chance)%"
-}
-
-/// One column in the hourly strip: the hour, condition icon, temperature, and the
-/// chance of precipitation.
-private struct HourlyColumn: View {
-    let hour: HourlyForecast
-
-    @AppStorage("useCelsius") private var useCelsius = false
-    @Environment(\.deviceScale) private var deviceScale
-    /// The place the weather is for — see `WeatherDialScreen.timeZone`.
-    @Environment(\.timeZone) private var timeZone
-
-    var body: some View {
-        // Never active: the hourly strip's marker is pinned to the panel, not carried by
-        // a column — see `hourlyStrip`. The column still keeps the marker's slot clear.
-        StripColumn(isActive: false) {
-            // Midnight is "00" like any other hour; the 7-day strip's marker is what
-            // says which day the strip has reached.
-            Text(hour.timeLabel(in: timeZone))
-                .climaCaps(.heading)
-                .foregroundStyle(Theme.panelInk)
-
-            // Same as the 7-day column: no condition means no icon, but the frame stays
-            // so the hours keep their rows aligned.
-            Group {
-                if let condition = hour.condition {
-                    Image(condition.iconName)
-                        .resizable()
-                        .scaledToFit()
-                        .foregroundStyle(Theme.panelIcon)
-                } else {
-                    Color.clear
-                }
-            }
-            .frame(width: baseStripContentWidth * deviceScale, height: baseStripContentWidth * deviceScale)
-
-            Text(temperatureText(hour.temperature, useCelsius: useCelsius))
-                .font(Theme.valueFont(scale: deviceScale))
-                .foregroundStyle(Theme.panelInk)
-
-            Text(precipitationChanceText(hour.precipitationChance))
-                .font(Theme.valueFont(scale: deviceScale))
-                .foregroundStyle(Theme.panelInkMuted)
-        }
-    }
-}
-
-/// One column on the hourly strip: an hour, or a sunrise or sunset between two of them.
-private enum HourlyStripItem: Identifiable {
-    case hour(HourlyForecast)
-    case sun(SunEvent)
-
-    /// What the strip's scroll position is kept in. Built from the hour's start or the
-    /// event itself rather than `HourlyForecast.id`, because every reading makes new ids
-    /// and the scroll position has to survive from one to the next.
-    enum ID: Hashable {
-        case hour(Date)
-        case sun(SunEvent)
-
-        /// When the column is: the hour's start, or the event's moment.
-        var date: Date {
-            switch self {
-            case .hour(let date): date
-            case .sun(let event): event.date
-            }
-        }
-    }
-
-    var id: ID {
-        switch self {
-        case .hour(let hour): .hour(hour.date)
-        case .sun(let event): .sun(event)
-        }
-    }
-
-    /// Orders the columns by time. A sunrise or sunset at exactly the top of an hour
-    /// goes after that hour's column, the same as one a minute later would.
-    var sortKey: (Date, Int) {
-        switch self {
-        case .hour(let hour): (hour.date, 0)
-        case .sun(let event): (event.date, 1)
-        }
-    }
-}
-
-/// A sunrise or sunset column on the hourly strip: the time it happens, to the minute,
-/// over its icon. The temperature and rain-chance rows are left empty — there's no
-/// forecast for a moment, only for an hour.
-private struct SunEventColumn: View {
-    let event: SunEvent
-
-    @Environment(\.deviceScale) private var deviceScale
-    /// The place the weather is for — see `WeatherDialScreen.timeZone`.
-    @Environment(\.timeZone) private var timeZone
-
-    var body: some View {
-        // Never active, the same as `HourlyColumn`.
-        StripColumn(isActive: false) {
-            Text(event.timeLabel(in: timeZone))
-                .climaCaps(.heading)
-                .foregroundStyle(Theme.panelInk)
-
-            // The artwork fills nearly its whole canvas, where the condition icons only
-            // fill about half of theirs (see `baseStripContentWidth`), so it's drawn at a
-            // bit over half the frame to come out the same size as its neighbours. The
-            // outer frame matches theirs so the rows below stay on the same baselines.
-            Image(event.iconName)
-                .resizable()
-                .scaledToFit()
-                .frame(width: baseStripContentWidth * 0.55 * deviceScale)
-                .frame(width: baseStripContentWidth * deviceScale, height: baseStripContentWidth * deviceScale)
-
-            // Held open but not shown, so the column is as tall as the hours either side.
-            Text("—")
-                .font(Theme.valueFont(scale: deviceScale))
-                .hidden()
-            Text("—")
-                .font(Theme.valueFont(scale: deviceScale))
-                .hidden()
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(event.accessibilityLabel(in: timeZone))
-    }
-}
-
-/// The shared shell for both strips: an equal-width column topped by the "now" marker,
-/// which is always laid out but only visible on the active column, so every column in a
-/// row keeps its contents on the same baselines.
-
-private struct StripColumn<Content: View>: View {
-    let isActive: Bool
-    @ViewBuilder let content: Content
-
-    @Environment(\.deviceScale) private var deviceScale
-
-    var body: some View {
-        VStack(spacing: 0) {
-            StripMarker()
-                .opacity(isActive ? 1 : 0)
-                // A quick cross-fade when the marker moves — on the 7-day strip it follows
-                // the hourly strip's swiping from one day to the next.
-                .animation(.easeInOut(duration: 0.2), value: isActive)
-
-            VStack(spacing: 7 * deviceScale) {
-                content
-            }
-            // Measured from the marker's slot, so the triangle's tip still clears the
-            // heading beneath it.
-            .padding(.top, 6 * deviceScale)
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
-/// The "now" marker on its own: the same triangle-and-line index mark the dial's pointer
-/// uses, shrunk down — one shape, one colour, one meaning throughout the app. The 7-day
-/// strip's columns each carry one, shown on the marked day; the hourly strip has a single
-/// one pinned over its first slot, with the hours sliding underneath.
-private struct StripMarker: View {
-    @Environment(\.deviceScale) private var deviceScale
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Rectangle()
-                .fill(Theme.indexMark)
-                .frame(width: baseStripContentWidth * deviceScale, height: 4 * deviceScale)
-
-            Triangle()
-                .fill(Theme.indexMark)
-                .frame(width: 16 * deviceScale, height: 7 * deviceScale)
-        }
-    }
-}
-
-// MARK: - Settings drawer
-
-/// The two switches, kept behind a plain rectangular cover that slides out of the way.
-///
-/// The knurling near the cover's right end is the finger grip, and the only thing on
-/// the closed row that invites a touch. Touching it slides the cover left; it stops
-/// with just that grip still showing at the left end, so the same texture that opened
-/// the drawer is what's under the finger to close it again.
-///
-/// The cover doesn't fill the row — it sits in it with `gap` of clearance on every
-/// side, and the recess showing through that clearance is what draws the seam around
-/// it. A real gap rather than a line stroked onto the cover, because a stroke only
-/// exists where the cover does: slid open, its left end is cut off by the clip, and a
-/// stroked outline would leave the parked grip with a seam on three sides and a raw
-/// edge on the fourth.
-///
-/// The switches don't move between the two states — they sit permanently inset past
-/// where the parked grip ends, and the cover slides over them — so nothing jumps
-/// sideways as the drawer opens.
-private struct SettingsDrawer: View {
-    @Binding var useCelsius: Bool
-    @Binding var isDarkMode: Bool
-
-    @Environment(\.deviceScale) private var deviceScale
-    @State private var isOpen = false
-
-    /// Static as well as an instance property, because the page above reserves exactly
-    /// this much room to scroll behind, and the two mustn't drift apart.
-    static func height(scale: CGFloat) -> CGFloat { 56 * scale }
-
-    /// How far the bar floats above the screen's physical bottom edge.
-    ///
-    /// This is what keeps the corners honest. Run flush to the edge, the display's own
-    /// ~55-62pt corner curve cuts across the bar's 18pt corners and swallows the 3pt seam
-    /// entirely at both ends — the screen's bottom is not a rectangle, and there's no
-    /// public API for its radius to match against. Held `gutter` clear of that edge and
-    /// the same distance in from the sides as the forecast panels, the bar's corners stay
-    /// well inside the curve on every iPhone, and the seam reads evenly the whole way
-    /// round in both states.
-    static func bottomMargin(scale: CGFloat) -> CGFloat { Theme.gutter * scale }
-
-    /// The forecast panels' width, so the bar lines up with them and with the canopy.
-    private var width: CGFloat { DialView.canopyWidth(scale: deviceScale) }
-    private var height: CGFloat { Self.height(scale: deviceScale) }
-    /// How much cover stays on screen once it's open: enough to hold the whole knurled
-    /// grip, and with it the way back.
-    ///
-    /// Back to 44 now that the bar is its tuned height again — it was only widened to 60
-    /// to keep the parked block from reading as a tall thin tab when the bar stretched
-    /// down to the screen's edge, and that's no longer the shape it has to balance.
-    private var gripWidth: CGFloat { 44 * deviceScale }
-    /// The clearance between the cover and the recess it rides in, on all four sides.
-    private var gap: CGFloat { 3 * deviceScale }
-    /// Concentric with the slot's rather than a value of its own: exactly one `gap`
-    /// smaller, so the seam between cover and recess holds the same width round the
-    /// corners as it does along the straight edges. At the old flat 10 against the slot's
-    /// 18 the two curves weren't concentric, and the seam quietly fattened at all four.
-    private var coverRadius: CGFloat { baseStripCornerRadius * deviceScale - gap }
-
-    /// The cover is the row less its clearance, so `travel` — and the grip left behind
-    /// at the end of it — are both measured against the cover's own width.
-    private var coverWidth: CGFloat { width - 2 * gap }
-    private var coverHeight: CGFloat { height - 2 * gap }
-    private var travel: CGFloat { coverWidth - gripWidth }
-
-    private var coverShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: coverRadius, style: .continuous)
-    }
-
-    private var ridgesWidth: CGFloat { GripRidges.width(scale: deviceScale) }
-
-    /// The drawer's outline — the forecast panels' shape, to the point of sharing their
-    /// corner radius. Rounded on all four corners again now that the bar floats clear of
-    /// the screen's edge and has four corners of its own to show.
-    private var slotShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: baseStripCornerRadius * deviceScale, style: .continuous)
-    }
-
-    var body: some View {
-        ZStack(alignment: .leading) {
-            // Background, rounding and shading applied in the same order `strip` uses,
-            // so what the cover slides off to reveal is indistinguishable from one of
-            // the forecast panels above it — shadow falling across the switches
-            // included, exactly as it falls across the forecast columns.
-            switches
-                // Faded rather than merely covered, so a switch can't show through the
-                // clearance around the cover while the drawer is shut. The opacity sits
-                // above the background deliberately: the recess itself stays visible in
-                // both states, and it's what fills the seam around the cover.
-                .opacity(isOpen ? 1 : 0)
-                .allowsHitTesting(isOpen)
-                .frame(width: width, height: height)
-                .background(Theme.panel)
-                .clipShape(slotShape)
-                .overlay(InnerShadow(shape: slotShape, scale: deviceScale))
-
-            coverLayer
-        }
-        .frame(width: width, height: height)
-    }
-
-    /// The cover, and the window it slides within.
-    ///
-    /// `offset` moves the cover without moving the frame around it, so the clip cuts it
-    /// at that frame's edge — and since `padding` holds the frame `gap` in from the row,
-    /// the open state keeps its clearance on the left exactly as the closed state has it
-    /// on the right.
-    ///
-    /// The clip is `coverShape`, not a plain rectangle. A rectangular one left the parked
-    /// grip with two square corners at its cut end, and those sat outside the recess's own
-    /// rounded corner — the cover visibly spilled out of the slot it's supposed to ride
-    /// in. Clipping to the same rounded shape trims the parked end to the recess's curve
-    /// instead, and costs nothing when the drawer is shut, since the cover is that shape
-    /// already.
-    private var coverLayer: some View {
-        cover
-            .offset(x: isOpen ? -travel : 0)
-            .frame(width: coverWidth, height: coverHeight, alignment: .leading)
-            .clipShape(coverShape)
-            .padding(gap)
-    }
-
-    private var switches: some View {
-        HStack {
-            SlideToggle(leading: "°F", trailing: "°C", tracked: false, isTrailing: $useCelsius)
-            Spacer()
-            SlideToggle(leading: "Light", trailing: "Dark", isTrailing: $isDarkMode)
-        }
-        // Clear of where the parked cover ends — its own `gap` inset included, since
-        // the switches are measured from the row's edge and the cover isn't.
-        .padding(.leading, gap + gripWidth + 10 * deviceScale)
-        // The row reaches the screen's own edge now, so the last label needs a real
-        // margin rather than just enough to clear a rounded corner.
-        .padding(.trailing, 20 * deviceScale)
-    }
-
-    private var cover: some View {
-        coverShape
-            // Page colour, not a surface tone: closed, the cover is meant to sit flush
-            // and near-invisible, leaving only the seam around it and the knurling to
-            // say there's anything here at all.
-            .fill(Theme.canvas)
-            .frame(width: coverWidth, height: coverHeight)
-            // The knurling — the same texture the toggle knobs wear, and now the only
-            // thing marking the grip. Centred in the width that stays on screen when
-            // the drawer is open, so the finger lands on it in both states. Held at
-            // reduced strength because the cover is page colour, pale enough that
-            // full-contrast lines would read as a printed barcode rather than a
-            // texture.
-            .overlay(alignment: .trailing) {
-                GripRidges(height: 18 * deviceScale, strength: 0.85, scale: deviceScale)
-                    .padding(.trailing, (gripWidth - ridgesWidth) / 2)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                    isOpen.toggle()
-                }
-            }
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel(isOpen ? "Hide settings" : "Show settings")
-    }
-}
-
-// MARK: - Controls
-
-/// A two-position slide switch, built to look like the hardware kind: a channel milled
-/// into the panel, and a raised, knurled slab riding in it between two engraved detent
-/// marks.
-///
-/// Four things do the work, all of them lit from above like the rest of the app's
-/// moulded surfaces (`InnerShadow`):
-/// - The channel is its own tone (`Theme.toggleTrack`), darker than the panel it's cut
-///   into, and squared off rather than a capsule. A capsule of the panel's own colour
-///   reads as a pill drawn on the surface; a darker rounded rectangle reads as a hole
-///   in it.
-/// - The knob is a slab, not a disc — filled with a top-to-bottom gradient and rimmed
-///   with a bright top edge falling to a dark bottom one, so it has a visible thickness
-///   standing proud of the channel.
-/// - It carries `GripRidges`, the same knurling as the drawer's cover. This is the part
-///   that says *this* is the bit to push, rather than leaving a smooth lozenge that
-///   could as easily be a progress indicator.
-/// - A tick beside each end marks where the knob stops, and brightens with the label on
-///   the side it's resting against — the detent marks on the reference panel.
-///
-/// The words ("°F"/"°C", "Light"/"Dark") stay outside the channel rather than being
-/// printed on the knob, which is how a panel switch is labelled and also what lets the
-/// label itself be a tap target.
-private struct SlideToggle: View {
-    let leading: String
-    let trailing: String
-    /// Word labels want the tracked-out treatment the rest of the app uses; a unit like
-    /// "°F" does not — spacing it out reads as "° F".
-    var tracked = true
-    @Binding var isTrailing: Bool
-
-    @Environment(\.deviceScale) private var deviceScale
-
-    /// Wider than it is tall, along the direction of travel: the proportion of a thumb
-    /// slide rather than of a button.
-    private var knobWidth: CGFloat { 28 * deviceScale }
-    private var knobHeight: CGFloat { 22 * deviceScale }
-    /// The gap between knob and channel wall. Small — a machined fit, not a loose one.
-    private var padding: CGFloat { 3 * deviceScale }
-    private var trackHeight: CGFloat { knobHeight + 2 * padding }
-    /// How far the knob throws. A shade under its own width: plenty for the two
-    /// positions to be unmistakable at a glance, and no more — this row carries two
-    /// switches and four labels, and a longer channel pushes "DARK" off the panel's
-    /// right edge, where the drawer's clip cuts it in half.
-    private var travel: CGFloat { 22 * deviceScale }
-    private var trackWidth: CGFloat { knobWidth + travel + 2 * padding }
-
-    /// Rounded, but well short of a capsule — the channel should keep its corners.
-    private var trackShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 8 * deviceScale, style: .continuous)
-    }
-    /// A touch tighter than the channel's, so the knob looks like a part machined to
-    /// drop into it rather than a shape scaled down from it.
-    private var knobShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 6 * deviceScale, style: .continuous)
-    }
-
-    var body: some View {
-        HStack(spacing: 4 * deviceScale) {
-            label(leading, isSelected: !isTrailing) { isTrailing = false }
-            tick(isSelected: !isTrailing)
-            track
-            tick(isSelected: isTrailing)
-            label(trailing, isSelected: isTrailing) { isTrailing = true }
-        }
-    }
-
-    private func label(_ title: String, isSelected: Bool, select: @escaping () -> Void) -> some View {
-        Text(title)
-            .climaCaps(.small, tracked: tracked)
-            .foregroundStyle(isSelected ? Theme.ink : Theme.inkMuted)
-            .contentShape(Rectangle())
-            .onTapGesture { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { select() } }
-    }
-
-    /// The detent mark between a label and the end of the channel. Deliberately faint
-    /// when it isn't the live one: two marks of equal weight would read as decoration,
-    /// where one bright and one dim reads as a position indicator.
-    private func tick(isSelected: Bool) -> some View {
-        Capsule()
-            .fill(isSelected ? Theme.ink : Theme.inkMuted.opacity(0.4))
-            .frame(width: 4 * deviceScale, height: deviceScale)
-    }
-
-    private var track: some View {
-        trackShape
-            .fill(Theme.toggleTrack)
-            .frame(width: trackWidth, height: trackHeight)
-            // Colour alone only makes it a dark shape; the shading is what gives the
-            // channel a lip and a floor, and so a depth. Tightened well in from the
-            // default `spread`, which is sized for the forecast panels — at full width
-            // it washes across a channel this narrow instead of hugging its edge.
-            .overlay(InnerShadow(shape: trackShape, opacity: 0.3, spread: 5, scale: deviceScale))
-            .overlay(alignment: isTrailing ? .trailing : .leading) {
-                knob.padding(padding)
-            }
-            .contentShape(trackShape)
-            .onTapGesture {
-                SoundPlayer.shared.play(.toggle)
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { isTrailing.toggle() }
-            }
-    }
-
-    /// The raised knob: a top-lit gradient face carrying the grip knurling, a bevel
-    /// stroked round the rim (bright at the top, dark at the bottom) to give it an
-    /// edge, and a drop shadow cast down into the channel so it sits *above* the panel
-    /// rather than flush in it.
-    private var knob: some View {
-        knobShape
-            .fill(
-                LinearGradient(
-                    colors: [Theme.toggleKnob, Theme.toggleKnobShade],
-                    startPoint: .top, endPoint: .bottom
-                )
-            )
-            .frame(width: knobWidth, height: knobHeight)
-            // Well short of the knob's full height, and tighter together than the
-            // drawer cover's: the grooves have to read as one patch of knurling on a
-            // face this small, where at full spacing and height they separate into
-            // three bars and start looking like an icon.
-            .overlay(GripRidges(height: knobHeight * 0.38, spacing: 2.5, scale: deviceScale))
-            .overlay(
-                knobShape.strokeBorder(
-                    LinearGradient(
-                        colors: [.white.opacity(0.9), .white.opacity(0.06), .black.opacity(0.2)],
-                        startPoint: .top, endPoint: .bottom
-                    ),
-                    lineWidth: deviceScale
-                )
-            )
-            // Straight down, not down-and-right: everything else on the page is lit from
-            // directly above, and an offset shadow here would light this one control
-            // from a different sun.
-            .shadow(color: .black.opacity(0.3), radius: 2 * deviceScale, y: 1.5 * deviceScale)
     }
 }
 

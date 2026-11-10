@@ -7,8 +7,8 @@ import Foundation
 
 /// A sunrise or a sunset. On the hourly strip it gets a column of its own, between the
 /// two hours it falls between.
-struct SunEvent: Hashable {
-    enum Kind: Hashable {
+struct SunEvent: Hashable, Codable {
+    enum Kind: Hashable, Codable {
         case sunrise
         case sunset
     }
@@ -23,13 +23,11 @@ struct SunEvent: Hashable {
         kind == .sunrise ? "sunrise" : "sunset"
     }
 
-    /// The time to the minute on the 24-hour clock, e.g. "07:01" or "19:42", as a clock
-    /// in `timeZone` — the place the weather is for — reads it.
+    /// The time to the minute, e.g. "07:01" or "19:42" — "7:01" and "7:42" on a phone set
+    /// to 12-hour time; see `ClockText` — as a clock in `timeZone`, the place the weather
+    /// is for, reads it.
     func timeLabel(in timeZone: TimeZone) -> String {
-        let calendar = Calendar.local(to: timeZone)
-        let hour = calendar.component(.hour, from: date)
-        let minute = calendar.component(.minute, from: date)
-        return String(format: "%02d:%02d", hour, minute)
+        ClockText.hourMinute(date, in: timeZone)
     }
 
     /// What VoiceOver reads, since the icon alone says nothing to it.
@@ -39,8 +37,16 @@ struct SunEvent: Hashable {
 }
 
 /// One hour in the hourly strip shown below the 7-day forecast.
-struct HourlyForecast: Identifiable {
+struct HourlyForecast: Identifiable, Codable {
     let id = UUID()
+
+    /// What's saved when a reading is kept for the next launch — see
+    /// `WeatherSourceSwitch.savedWeather`. Everything but `id`, which is made fresh each
+    /// time and has no business being saved.
+    private enum CodingKeys: String, CodingKey {
+        case date, condition, temperature, precipitationChance
+    }
+
     /// The start of the hour. Always known, the same way `DailyForecast.date` is — it's
     /// what lets the strip keep its time labels with nothing to show against them.
     let date: Date
@@ -52,12 +58,12 @@ struct HourlyForecast: Identifiable {
     /// Chance of rain, snow, etc. during the hour, as a whole percent (0–100).
     let precipitationChance: Int?
 
-    /// Compact 24-hour label, e.g. "06", "13", "00" — just the hour, without ":00", so
-    /// the columns stay narrow. The sunrise/sunset columns carry the minutes. In
-    /// `timeZone`, the place the weather is for.
+    /// Compact label, e.g. "06", "13", "00" — "6AM", "1PM", "12AM" on a phone set to
+    /// 12-hour time; see `ClockText` — just the hour, without ":00", so the columns stay
+    /// narrow. The sunrise/sunset columns carry the minutes. In `timeZone`, the place the
+    /// weather is for.
     func timeLabel(in timeZone: TimeZone) -> String {
-        let hour = Calendar.local(to: timeZone).component(.hour, from: date)
-        return String(format: "%02d", hour)
+        ClockText.hour(date, in: timeZone)
     }
 
 }

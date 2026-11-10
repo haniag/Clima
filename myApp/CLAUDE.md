@@ -36,9 +36,7 @@ I'm not a professional software developer — basic coding background, using Cla
 - Favor `async/await` over completion handlers.
 
 ## Not doing yet (don't build ahead of these)
-- Multi-day/hourly forecast UI
 - More widgets / Live Activities (one rectangular lock screen widget exists — `ClimaWidget/`, fed by the app through the `group.com.fursa.Clima` App Group; see `Shared/WidgetWeather.swift`)
 - watchOS companion
-- Location search (current location only for v1)
 
 - Don't add a Co-Authored-By line to commit messages.

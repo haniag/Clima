@@ -369,6 +369,19 @@ func precipitationText(_ inches: Double?, useMetric: Bool) -> String {
     return "\(millimetres.formatted(.number.precision(.fractionLength(1)))) mm"
 }
 
+/// Formats a wind speed, stored in miles per hour, in whichever system the °F/°C switch
+/// is on — "8 mph", "13 km/h". Whole numbers: nobody feels a tenth of a mile per hour.
+///
+/// The unit is written out for the same reason as `precipitationText`'s, and `nil`
+/// formats as a bare dash for the same reason as `temperatureText`'s.
+func windText(_ milesPerHour: Double?, useMetric: Bool) -> String {
+    guard let milesPerHour else { return "—" }
+    guard useMetric else {
+        return "\(Int(milesPerHour.rounded())) mph"
+    }
+    return "\(Int((milesPerHour * 1.609344).rounded())) km/h"
+}
+
 // MARK: - Private
 
 private extension Theme {

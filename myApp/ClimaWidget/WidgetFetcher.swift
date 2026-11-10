@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import os
 
 /// The widget's own fetch, so it stays current without the app being opened.
 ///
@@ -32,14 +33,14 @@ enum WidgetFetcher {
             let snapshot = try await service.currentWeather()
             // Read after the fetch rather than before, so a °F/°C flip the app saved while
             // this was out isn't overwritten with the old setting.
-            let useCelsius = WidgetWeather.saved?.useCelsius ?? false
+            let useCelsius = WidgetWeather.saved?.useCelsius ?? TemperatureUnit.phoneUsesCelsius
             let weather = WidgetWeather(snapshot, useCelsius: useCelsius, source: source)
             WidgetWeather.saved = weather
             return weather
         } catch {
             // Most often location: the app hasn't been given permission yet, or the
             // phone couldn't get a fix in time.
-            print("Widget fetch failed: \(error)")
+            Log.widget.error("Widget fetch failed: \(String(describing: error), privacy: .public)")
             return nil
         }
     }

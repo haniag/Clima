@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import os
 
 /// The sheet the header's arrow opens: type a place, pick it, and the screen shows its
 /// weather. "Current Location" sits at the top, always, as the way back.
@@ -176,7 +177,8 @@ struct LocationSearchSheet: View {
         do {
             choose(try await search.resolve(suggestion))
         } catch {
-            print("Couldn't look up \(suggestion.title): \(error)")
+            // The place's name is left out of the log: what someone searched for is theirs.
+            Log.location.error("Couldn't look up the chosen place: \(String(describing: error), privacy: .public)")
             errorMessage = "Couldn't find that place. Try another."
         }
     }

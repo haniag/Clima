@@ -74,6 +74,10 @@ struct LockScreenWeatherView: View {
                     Text(hourLabel(hour.date, in: reading.timeZone))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        // "12PM" is twice as long as "13"; shrink it a little before
+                        // letting it wrap or cut off.
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
 
                     Group {
                         if let iconName = hour.iconName {
@@ -97,19 +101,19 @@ struct LockScreenWeatherView: View {
                 .frame(maxWidth: .infinity)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(
-                    "\(hourLabel(hour.date, in: reading.timeZone)):00, "
+                    // "13:00" on a 24-hour phone; "1PM" already reads as a time.
+                    "\(hourLabel(hour.date, in: reading.timeZone))\(ClockText.uses12Hour ? "" : ":00"), "
                         + temperatureText(hour.temperature, useCelsius: reading.useCelsius, degreeSign: false)
                 )
             }
         }
     }
 
-    /// "06", "13", "00" — the same 24-hour label as the app's hourly strip, in the time
-    /// zone of the place the weather is for.
+    /// "06", "13", "00" — or "6AM", "1PM", "12AM" on a phone set to 12-hour time — the
+    /// same label as the app's hourly strip, in the time zone of the place the weather
+    /// is for.
     private func hourLabel(_ date: Date, in timeZone: TimeZone) -> String {
-        var calendar = Calendar.current
-        calendar.timeZone = timeZone
-        return String(format: "%02d", calendar.component(.hour, from: date))
+        ClockText.hour(date, in: timeZone)
     }
 }
 

@@ -100,6 +100,7 @@ final class NewWeatherService: WeatherProviding {
             conditionLabel: observation.wxPhraseLong ?? observation.wxPhraseShort ?? condition.label,
             humidity: observation.relativeHumidity.map { Int($0.rounded()) },
             precipitationLastHour: observation.precip1Hour,
+            windSpeed: observation.windSpeed,
             daily: forecast.map { Self.dailyForecasts(from: $0, today: fetchedAt, in: timeZone) }
                 ?? .placeholder(from: fetchedAt, in: timeZone),
             hourly: Self.hourlyForecasts(from: hourly, at: fetchedAt, in: timeZone),
@@ -153,7 +154,10 @@ final class NewWeatherService: WeatherProviding {
     /// and all.
     ///
     /// Days run midnight to midnight in `timeZone`, the place the weather is for.
-    private static func dailyForecasts(from forecast: FifteenDayForecast, today: Date, in timeZone: TimeZone) -> [DailyForecast] {
+    ///
+    /// Not `private`, like `FifteenDayForecast` itself, so the tests can hand it a
+    /// forecast and check these rules — see `ClimaTests/DailyForecastRulesTests.swift`.
+    static func dailyForecasts(from forecast: FifteenDayForecast, today: Date, in timeZone: TimeZone) -> [DailyForecast] {
         let calendar = Calendar.local(to: timeZone)
         let start = [DailyForecast].stripStart(containing: today, in: timeZone)
         let parts = forecast.daypart.first
@@ -327,7 +331,7 @@ final class NewWeatherService: WeatherProviding {
 ///
 /// `temperature` and `iconCode` are required: a reading without them has nothing to put on
 /// the dial, so decoding fails and the screen shows its usual "couldn't get the weather"
-/// line. Humidity, precipitation and the phrase are optional — the readout manages
+/// line. Humidity, precipitation, wind and the phrase are optional — the readout manages
 /// without any of them.
 ///
 /// `nonisolated`, like the two forecast types below, because the project puts types on the
@@ -341,6 +345,8 @@ nonisolated private struct CurrentObservation: Decodable {
     let relativeHumidity: Double?
     /// Inches in the last hour, because the request asks for `units=e`.
     let precip1Hour: Double?
+    /// Miles per hour, because the request asks for `units=e`.
+    let windSpeed: Double?
     /// The condition in full, e.g. "Partly Cloudy".
     let wxPhraseLong: String?
     /// The same, abbreviated to fit a small space, e.g. "P Cloudy". Only a fallback.
@@ -358,7 +364,7 @@ nonisolated private struct CurrentObservation: Decodable {
 /// optional because the service sends `null` for ones that no longer apply — today's high
 /// and daytime values, for instance, once the day part is over. A null becomes a dash in
 /// that column rather than failing the whole forecast.
-nonisolated private struct FifteenDayForecast: Decodable {
+nonisolated struct FifteenDayForecast: Decodable {
     /// Each day's start as seconds since 1970; used to match days to the strip's columns.
     let validTimeUtc: [TimeInterval]
     /// Degrees Fahrenheit, because the request asks for `units=e`.

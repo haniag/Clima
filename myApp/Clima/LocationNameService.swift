@@ -5,6 +5,7 @@
 
 import CoreLocation
 import Foundation
+import os
 
 /// Looks up what the place the phone is in is called — "Centreville" — for the header.
 ///
@@ -33,13 +34,13 @@ nonisolated enum LocationNameService {
             let (data, response) = try await URLSession.shared.data(from: url)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard status == 200 else {
-                print("Location name lookup failed: HTTP \(status)")
+                Log.location.error("Location name lookup failed: HTTP \(status, privacy: .public)")
                 return nil
             }
             let place = try JSONDecoder().decode(LocationResponse.self, from: data)
             return place.displayName ?? place.city
         } catch {
-            print("Location name lookup failed: \(error)")
+            Log.location.error("Location name lookup failed: \(String(describing: error), privacy: .public)")
             return nil
         }
     }

@@ -6,8 +6,16 @@
 import Foundation
 
 /// One day's forecast for the horizontal 7-day strip shown below the dial.
-struct DailyForecast: Identifiable {
+struct DailyForecast: Identifiable, Codable {
     let id = UUID()
+
+    /// What's saved when a reading is kept for the next launch — see
+    /// `WeatherSourceSwitch.savedWeather`. Everything but `id`, which is made fresh each
+    /// time and has no business being saved.
+    private enum CodingKeys: String, CodingKey {
+        case date, condition, highTemp, lowTemp, precipitationChance
+    }
+
     /// The one value that's always known. A date needs no network and no permission, so
     /// the strip can lay out its seven columns with the right weekday names even when
     /// there's nothing to put in them yet.

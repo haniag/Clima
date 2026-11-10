@@ -13,7 +13,7 @@ import WeatherKit
 /// two states — it has a reading or it doesn't — and a type that can't be half-filled is
 /// what makes that true. Three independent properties would allow a fourth state nobody
 /// designed: a dial showing rain above a strip that failed to load.
-struct WeatherSnapshot {
+struct WeatherSnapshot: Codable {
     let condition: WeatherCondition
     /// Degrees Fahrenheit, already rounded to a whole number.
     ///
@@ -37,6 +37,10 @@ struct WeatherSnapshot {
     /// converts. The new service reports it directly (`precip1Hour`); for WeatherKit it's
     /// the amount in the last full hour of the hourly forecast.
     let precipitationLastHour: Double?
+    /// How fast the wind is blowing, in miles per hour, or nil when the service didn't
+    /// say. Miles per hour for the same reason again; `windText(_:useMetric:)` in Theme
+    /// converts.
+    let windSpeed: Double?
     /// Today and the six days after it, for the upper strip.
     let daily: [DailyForecast]
     /// Every hour of the forecast from the next one on, one each, for the lower strip —
@@ -106,6 +110,17 @@ enum WeatherServiceError: LocalizedError {
 /// account in sight.
 protocol WeatherProviding {
     func currentWeather() async throws -> WeatherSnapshot
+
+    /// The last reading this source fetched, kept from an earlier launch, or nil if
+    /// there isn't one worth showing. The screen opens on it — with its own "Updated"
+    /// time — instead of on a page of dashes, while the first fetch is still out.
+    ///
+    /// Only `WeatherSourceSwitch` keeps one; everything else gets the `nil` below.
+    var savedWeather: WeatherSnapshot? { get }
+}
+
+extension WeatherProviding {
+    var savedWeather: WeatherSnapshot? { nil }
 }
 
 /// The real one: Apple's WeatherKit, asked about wherever `LocationProvider` says we are.
@@ -214,6 +229,7 @@ final class WeatherService: WeatherProviding {
             // WeatherKit gives 0.0–1.0; the readout shows a whole percent.
             humidity: Int((current.humidity * 100).rounded()),
             precipitationLastHour: Self.precipitationLastHour(from: hourly, in: timeZone),
+            windSpeed: current.wind.speed.converted(to: .milesPerHour).value,
             daily: Self.dailyForecasts(from: daily, in: timeZone),
             hourly: Self.hourlyForecasts(from: hourly, in: timeZone),
             sunEvents: Self.sunEvents(from: daily),
@@ -370,6 +386,7 @@ struct PreviewWeatherService: WeatherProviding {
     var temperature: Int = 72
     var humidity: Int? = 47
     var precipitationLastHour: Double? = 0.02
+    var windSpeed: Double? = 8
     /// The made-up strips from `DailyForecast`/`HourlyForecast`. Only previews read these
     /// now — the running app's strips come from WeatherKit.
     var daily: [DailyForecast] = .sample
@@ -400,6 +417,7 @@ struct PreviewWeatherService: WeatherProviding {
             conditionLabel: condition.label,
             humidity: humidity,
             precipitationLastHour: precipitationLastHour,
+            windSpeed: windSpeed,
             daily: daily,
             hourly: hourly,
             sunEvents: sunEvents,

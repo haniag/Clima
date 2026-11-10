@@ -17,17 +17,15 @@ import os
 /// nothing either, because it's on screen rather than in a log where it can be searched.
 ///
 /// So the two audiences are served separately: a plain sentence goes to the screen, and
-/// the raw error goes to the console via `Logger`. Both come out of the same call, so
+/// the raw error goes to the console via `Log`. Both come out of the same call, so
 /// they can't drift apart.
 enum WeatherErrorMessage {
-
-    private static let log = Logger(subsystem: "com.fursa.Clima", category: "weather")
 
     /// What to show, having first recorded what actually happened.
     static func text(for error: Error) -> String {
         // The full error, once, where a developer can find it — `privacy: .public`
         // because none of this is the user's data and a redacted log is no use.
-        log.error("Weather fetch failed: \(String(describing: error), privacy: .public)")
+        Log.weather.error("Weather fetch failed: \(String(describing: error), privacy: .public)")
 
         // Our own failures already carry wording written for a reader — that's what their
         // `errorDescription` is for — so they pass straight through.
@@ -72,6 +70,16 @@ enum WeatherErrorMessage {
         // to match on — so rather than guess at a cause and risk naming the wrong one,
         // this says the true thing and points at the one control that retries.
         return generic
+    }
+
+    /// Whether a fetch failed because the app isn't allowed the phone's location — the
+    /// one failure the reader can fix themselves, in Settings, or sidestep by choosing a
+    /// place by name. The screen offers both when this is true.
+    static func isLocationDenied(_ error: Error) -> Bool {
+        if case .permissionDenied? = error as? LocationProvider.LocationError {
+            return true
+        }
+        return (error as? CLError)?.code == .denied
     }
 
     private static let generic = "Couldn't get the weather right now. Tap the hub to try again."

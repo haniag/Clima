@@ -75,6 +75,46 @@ final class WeatherSourceSwitch: WeatherProviding {
             : try await weatherKit.currentWeather()
         let cache = source == .newService ? newServiceHours : weatherKitHours
         snapshot.hourly = cache.filling(snapshot.hourly)
+        Self.save(snapshot, from: source)
         return snapshot
+    }
+
+    // MARK: - The reading kept for the next launch
+
+    /// The last reading fetched, if it's still worth opening on: from the service and for
+    /// the place that are chosen now, and from today.
+    ///
+    /// "Today" is counted where the weather is for, because the 7-day strip is. A reading
+    /// from yesterday would open with yesterday in the column that's always today, and a
+    /// page of dashes is more honest than that.
+    var savedWeather: WeatherSnapshot? {
+        guard let data = UserDefaults.standard.data(forKey: Self.savedKey),
+              // Something that no longer decodes (after an app update changed the
+              // reading's shape, say) counts as nothing saved, rather than an error.
+              let saved = try? JSONDecoder().decode(SavedReading.self, from: data),
+              saved.source == WeatherSource.current.rawValue,
+              saved.place == ChosenPlace.saved,
+              Calendar.local(to: saved.snapshot.timeZone).isDateInToday(saved.snapshot.fetchedAt)
+        else { return nil }
+        return saved.snapshot
+    }
+
+    /// A reading, with which service it came from and which place it's for — `nil` being
+    /// the phone's own location — so it's only ever shown again for the same two.
+    private struct SavedReading: Codable {
+        let source: String
+        let place: ChosenPlace?
+        let snapshot: WeatherSnapshot
+    }
+
+    private static let savedKey = "savedReading"
+
+    /// Kept in `UserDefaults`, like `HourlyCache`: one small value that should outlive
+    /// quitting the app. A failure to save costs the next launch its head start and
+    /// nothing else.
+    private static func save(_ snapshot: WeatherSnapshot, from source: WeatherSource) {
+        let reading = SavedReading(source: source.rawValue, place: ChosenPlace.saved, snapshot: snapshot)
+        guard let data = try? JSONEncoder().encode(reading) else { return }
+        UserDefaults.standard.set(data, forKey: savedKey)
     }
 }

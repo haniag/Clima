@@ -31,6 +31,17 @@ struct DialView: View {
     /// to animate *from* on first appearance, rather than materialising already settled.
     @State private var wheelRotation: Double = -WeatherCondition.clear.angle
 
+    /// Counts the wheel's landings and the hub's presses. The numbers mean nothing in
+    /// themselves: `.sensoryFeedback` taps the phone whenever the value it watches
+    /// changes, and a counter is a value that changes every time.
+    @State private var landings = 0
+    @State private var presses = 0
+
+    /// The Reduce Motion switch in Settings ▸ Accessibility ▸ Motion. With it on, the
+    /// wheel still turns to the new condition — that's the reading — but without the
+    /// spring's overshoot, and a refresh no longer sends it round a full turn for show.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     // MARK: - Sizing
     //
     // Every constant here is the exact measurement this dial was tuned at (an iPhone 16
@@ -172,6 +183,12 @@ struct DialView: View {
         .frame(width: diameter, height: diameter / 2, alignment: .top)
         .onAppear { animate(to: condition) }
         .onChange(of: condition) { _, newCondition in animate(to: newCondition) }
+        // The click you can feel, to go with the two you can hear: a light one as the hub
+        // is pressed, and a firmer one as the wheel drops into place. Unlike the sounds,
+        // these still arrive with the ring/silent switch set to silent. iOS leaves them
+        // out by itself if System Haptics is switched off in Settings.
+        .sensoryFeedback(.impact(weight: .light), trigger: presses)
+        .sensoryFeedback(.impact(weight: .medium), trigger: landings)
     }
 
     // MARK: - The canopy
@@ -375,11 +392,22 @@ struct DialView: View {
         // marks the wheel ARRIVING on the icon — the detent at the end of the turn, the
         // way a rotary switch clicks when it drops into position. Fired up front it
         // would land while the wheel was still visibly moving.
-        withAnimation(.spring(response: 0.75, dampingFraction: 0.55)) {
+        withAnimation(turn) {
             wheelRotation = -newCondition.angle
         } completion: {
-            SoundPlayer.shared.play(.wheelClick)
+            land()
         }
+    }
+
+    /// How the wheel moves: the spring normally, a short plain ease under Reduce Motion.
+    private var turn: Animation {
+        reduceMotion ? .easeInOut(duration: 0.3) : .spring(response: 0.75, dampingFraction: 0.55)
+    }
+
+    /// The wheel arriving on its icon: the click, heard and felt.
+    private func land() {
+        SoundPlayer.shared.play(.wheelClick)
+        landings += 1
     }
 
     /// Tapping refresh should always replay the spin-and-land animation, even if the
@@ -401,10 +429,19 @@ struct DialView: View {
         // pressed, so it has to answer the touch immediately. The wheel's own click
         // follows a beat later, when the turn it starts here comes to rest.
         SoundPlayer.shared.play(.refresh)
-        withAnimation(.spring(response: 0.75, dampingFraction: 0.55)) {
-            wheelRotation += 360
-        } completion: {
-            SoundPlayer.shared.play(.wheelClick)
+        presses += 1
+        // The full turn is decoration — it says "working", not anything about the
+        // weather — so it's the part Reduce Motion drops. The button's pressed artwork,
+        // its sound and its tap still answer the finger, and the wheel still lands with
+        // its click, just without travelling anywhere first.
+        if reduceMotion {
+            land()
+        } else {
+            withAnimation(turn) {
+                wheelRotation += 360
+            } completion: {
+                land()
+            }
         }
         onRefresh()
     }

@@ -5,6 +5,7 @@
 
 import MapKit
 import Observation
+import os
 
 /// One line in the search sheet's results.
 ///
@@ -100,7 +101,7 @@ final class LocationSearch: NSObject {
             // Replaced by a newer keystroke, which will answer instead.
             return
         } catch {
-            print("Location search failed: \(error)")
+            Log.location.error("Location search failed: \(String(describing: error), privacy: .public)")
             results = []
             if case .notConfigured? = error as? WeatherServiceError {
                 problem = "Location search isn't set up yet."
@@ -166,7 +167,7 @@ extension LocationSearch: MKLocalSearchCompleterDelegate {
     }
 
     func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
-        print("Location search failed: \(error)")
+        Log.location.error("Location search failed: \(String(describing: error), privacy: .public)")
         results = []
         // MapKit reports "no results" as an error too; that one is just "No matches".
         if (error as? MKError)?.code != .placemarkNotFound {

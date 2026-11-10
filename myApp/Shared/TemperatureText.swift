@@ -6,6 +6,16 @@
 //  about how a temperature reads.
 //
 
+import Foundation
+
+/// Which unit the app starts out in, before the °F/°C switch has ever been touched.
+nonisolated enum TemperatureUnit {
+    /// Whether the phone itself reads temperatures in Celsius — its region's habit, or
+    /// the Temperature setting in Settings ▸ General ▸ Language & Region when that's been
+    /// set by hand. Once the app's own switch is flipped, the switch wins.
+    static let phoneUsesCelsius = UnitTemperature(forLocale: .current) != .fahrenheit
+}
+
 /// Formats a Fahrenheit reading, converting to Celsius when the switch is on.
 ///
 /// Only the degree sign is shown, never the unit: the unit is already stated once, by
